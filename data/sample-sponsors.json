@@ -1,0 +1,41 @@
+{
+  "projectName": "PepsLive Sponsor Match Sample",
+  "activePlaylist": "pl_live",
+  "settings": {
+    "skin": "bottom_bar",
+    "position": "bottom",
+    "logoSize": 112,
+    "gap": 22,
+    "speed": 18,
+    "radius": 22,
+    "opacity": 72,
+    "shadow": "soft",
+    "autoPlay": true,
+    "safeArea": false,
+    "showNames": true,
+    "showTier": true
+  },
+  "playlists": [
+    {
+      "id": "pl_live",
+      "name": "ระหว่างแข่งขัน",
+      "mode": "bottom_bar",
+      "defaultDuration": 6,
+      "sponsorIds": []
+    },
+    {
+      "id": "pl_halftime",
+      "name": "พักครึ่ง / Sponsor Break",
+      "mode": "fullscreen_break",
+      "defaultDuration": 10,
+      "sponsorIds": []
+    },
+    {
+      "id": "pl_goal",
+      "name": "Goal Sponsor Popup",
+      "mode": "goal_popup",
+      "defaultDuration": 5,
+      "sponsorIds": []
+    }
+  ]
+}

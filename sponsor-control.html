@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PepsLive Sponsor Dock - Control</title>
+  <link rel="stylesheet" href="./assets/sponsor.css">
+</head>
+<body class="control-page">
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PepsLive OBS Tool</p>
+        <h1>PepsLive Sponsor Dock</h1>
+        <p class="hero-copy">
+          ระบบจัดการโลโก้สปอนเซอร์สำหรับ OBS Browser Source รองรับ Playlist, Sponsor Break,
+          Goal Popup, Safe Area, Export/Import และสั่ง Refresh Source ผ่าน OBS WebSocket
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="btn ghost" id="openDisplayBtn" href="./sponsor-display.html" target="_blank" rel="noopener">เปิด Display</a>
+        <a class="btn ghost" href="./sponsor-display.html?mode=clean" target="_blank" rel="noopener">URL สำหรับ OBS</a>
+        <button class="btn primary" id="saveNowBtn" type="button">บันทึกทันที</button>
+      </div>
+    </header>
+
+    <main class="grid-layout">
+      <section class="panel status-panel">
+        <div class="panel-head">
+          <div>
+            <h2>สถานะระบบ</h2>
+            <p>ใช้เช็กการ sync และการเชื่อมต่อ OBS</p>
+          </div>
+          <span class="pill" id="saveStatus">Ready</span>
+        </div>
+        <div class="status-grid">
+          <div class="status-card">
+            <span>Project</span>
+            <strong id="projectStatus">PepsLive Match</strong>
+          </div>
+          <div class="status-card">
+            <span>Sponsors</span>
+            <strong id="sponsorCount">0</strong>
+          </div>
+          <div class="status-card">
+            <span>Playlist</span>
+            <strong id="playlistStatus">Default</strong>
+          </div>
+          <div class="status-card">
+            <span>OBS</span>
+            <strong id="obsStatus">Disconnected</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>OBS WebSocket</h2>
+            <p>ถ้าใช้ OBS 28+ ปกติ port คือ 4455</p>
+          </div>
+          <span class="pill muted">Optional</span>
+        </div>
+        <div class="form-grid">
+          <label>
+            Host
+            <input id="obsHost" type="text" placeholder="127.0.0.1">
+          </label>
+          <label>
+            Port
+            <input id="obsPort" type="number" min="1" max="65535" placeholder="4455">
+          </label>
+          <label>
+            Password
+            <input id="obsPassword" type="password" placeholder="ใส่ถ้ามี">
+          </label>
+          <label>
+            Source Name
+            <input id="obsSourceName" type="text" placeholder="PEPS_SPONSOR_DISPLAY">
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="btn primary" id="connectObsBtn" type="button">Connect OBS</button>
+          <button class="btn" id="createSourceBtn" type="button">สร้าง Browser Source</button>
+          <button class="btn" id="refreshSourceBtn" type="button">Refresh Source</button>
+          <button class="btn" id="showSourceBtn" type="button">Show</button>
+          <button class="btn" id="hideSourceBtn" type="button">Hide</button>
+        </div>
+        <div class="note">
+          หมายเหตุ: ถ้าเปิด Control จาก Chrome แต่ Display อยู่ใน OBS Browser Source คนละ storage กัน
+          ให้เปิด Control เป็น OBS Custom Browser Dock เพื่อให้ข้อมูลและรูป sync เสถียรกว่า
+        </div>
+      </section>
+
+      <section class="panel control-wide">
+        <div class="panel-head">
+          <div>
+            <h2>Live Control</h2>
+            <p>ปุ่มสั่งงานสดสำหรับระหว่างไลฟ์</p>
+          </div>
+          <span class="pill live">Live</span>
+        </div>
+        <div class="button-grid">
+          <button class="btn primary" id="cmdShow" type="button">Show Sponsor</button>
+          <button class="btn" id="cmdHide" type="button">Hide Sponsor</button>
+          <button class="btn" id="cmdPrev" type="button">Previous</button>
+          <button class="btn" id="cmdNext" type="button">Next</button>
+          <button class="btn" id="cmdPause" type="button">Pause/Resume</button>
+          <button class="btn danger" id="cmdBreak" type="button">Sponsor Break</button>
+          <button class="btn accent" id="cmdGoal" type="button">Goal Sponsor Popup</button>
+          <button class="btn" id="cmdReload" type="button">Reload Display</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Project Settings</h2>
+            <p>กำหนดชื่อโปรเจกต์และหน้าตาหลัก</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="span-2">
+            Project Name
+            <input id="projectName" type="text" placeholder="PepsLive Match">
+          </label>
+          <label>
+            Active Skin
+            <select id="skin">
+              <option value="bottom_bar">Bottom Sponsor Bar</option>
+              <option value="corner_badge">Corner Badge</option>
+              <option value="side_tower">Side Tower</option>
+              <option value="ticker">Ticker Run</option>
+              <option value="grid">Grid Board</option>
+              <option value="fullscreen_break">Fullscreen Break</option>
+              <option value="goal_popup">Goal Popup</option>
+            </select>
+          </label>
+          <label>
+            Position
+            <select id="position">
+              <option value="bottom">Bottom</option>
+              <option value="top">Top</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+              <option value="center">Center</option>
+            </select>
+          </label>
+          <label>
+            Logo Size
+            <input id="logoSize" type="range" min="40" max="280" step="2">
+            <span class="range-value" id="logoSizeValue"></span>
+          </label>
+          <label>
+            Gap
+            <input id="gap" type="range" min="4" max="80" step="1">
+            <span class="range-value" id="gapValue"></span>
+          </label>
+          <label>
+            Speed
+            <input id="speed" type="range" min="2" max="40" step="1">
+            <span class="range-value" id="speedValue"></span>
+          </label>
+          <label>
+            Radius
+            <input id="radius" type="range" min="0" max="60" step="1">
+            <span class="range-value" id="radiusValue"></span>
+          </label>
+          <label>
+            Panel Opacity
+            <input id="opacity" type="range" min="0" max="100" step="1">
+            <span class="range-value" id="opacityValue"></span>
+          </label>
+          <label>
+            Shadow
+            <select id="shadow">
+              <option value="none">None</option>
+              <option value="soft">Soft</option>
+              <option value="strong">Strong</option>
+              <option value="neon">Neon Sport</option>
+            </select>
+          </label>
+        </div>
+        <div class="switch-row">
+          <label class="switch-label"><input id="autoPlay" type="checkbox"> Auto Play</label>
+          <label class="switch-label"><input id="safeArea" type="checkbox"> Show Safe Area</label>
+          <label class="switch-label"><input id="showNames" type="checkbox"> Show Sponsor Name</label>
+          <label class="switch-label"><input id="showTier" type="checkbox"> Show Tier Badge</label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Sponsor Library</h2>
+            <p>อัปโหลดโลโก้ PNG/JPG/WebP/SVG แล้วจัดระดับสปอนเซอร์</p>
+          </div>
+          <label class="btn primary file-btn">
+            เพิ่มโลโก้
+            <input id="sponsorFiles" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple>
+          </label>
+        </div>
+        <div class="library-tools">
+          <input id="sponsorSearch" type="search" placeholder="ค้นหาสปอนเซอร์">
+          <select id="tierFilter">
+            <option value="all">ทุกระดับ</option>
+            <option value="main">Main</option>
+            <option value="gold">Gold</option>
+            <option value="silver">Silver</option>
+            <option value="partner">Partner</option>
+          </select>
+        </div>
+        <div id="sponsorList" class="sponsor-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Playlist Manager</h2>
+            <p>ทำชุดแสดงผลแยกตามช่วงการแข่งขัน</p>
+          </div>
+          <button class="btn primary" id="addPlaylistBtn" type="button">เพิ่ม Playlist</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            Active Playlist
+            <select id="activePlaylist"></select>
+          </label>
+          <label>
+            Playlist Name
+            <input id="playlistName" type="text" placeholder="ระหว่างแข่งขัน">
+          </label>
+          <label>
+            Playlist Mode
+            <select id="playlistMode">
+              <option value="bottom_bar">Bottom Sponsor Bar</option>
+              <option value="corner_badge">Corner Badge</option>
+              <option value="side_tower">Side Tower</option>
+              <option value="ticker">Ticker Run</option>
+              <option value="grid">Grid Board</option>
+              <option value="fullscreen_break">Fullscreen Break</option>
+              <option value="goal_popup">Goal Popup</option>
+            </select>
+          </label>
+          <label>
+            Default Duration
+            <input id="playlistDuration" type="number" min="2" max="60" step="1">
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="btn" id="savePlaylistBtn" type="button">บันทึก Playlist</button>
+          <button class="btn danger" id="deletePlaylistBtn" type="button">ลบ Playlist</button>
+          <button class="btn" id="shufflePlaylistBtn" type="button">Shuffle</button>
+        </div>
+        <div id="playlistItems" class="playlist-items"></div>
+      </section>
+
+      <section class="panel preview-panel control-wide">
+        <div class="panel-head">
+          <div>
+            <h2>Live Preview</h2>
+            <p>พรีวิวคร่าว ๆ ก่อนเอา URL ไปใส่ OBS</p>
+          </div>
+          <span class="pill">1920x1080</span>
+        </div>
+        <div class="preview-frame">
+          <iframe id="previewFrame" src="./sponsor-display.html?preview=1" title="Sponsor Preview"></iframe>
+        </div>
+      </section>
+
+      <section class="panel control-wide">
+        <div class="panel-head">
+          <div>
+            <h2>Backup / Import / Export</h2>
+            <p>ใช้ย้ายเครื่องหรือสำรองโปรเจกต์ก่อนวันงาน</p>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="btn primary" id="exportProjectBtn" type="button">Export Project JSON</button>
+          <label class="btn file-btn">
+            Import Project JSON
+            <input id="importProjectInput" type="file" accept="application/json">
+          </label>
+          <button class="btn" id="loadSampleBtn" type="button">โหลด Sample</button>
+          <button class="btn danger" id="resetProjectBtn" type="button">Reset ทั้งหมด</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="sponsorCardTemplate">
+    <article class="sponsor-card">
+      <div class="sponsor-logo-wrap">
+        <img class="sponsor-logo" alt="">
+      </div>
+      <div class="sponsor-fields">
+        <input class="sponsor-name" type="text" placeholder="Sponsor name">
+        <select class="sponsor-tier">
+          <option value="main">Main</option>
+          <option value="gold">Gold</option>
+          <option value="silver">Silver</option>
+          <option value="partner">Partner</option>
+        </select>
+        <input class="sponsor-duration" type="number" min="2" max="60" step="1">
+      </div>
+      <div class="sponsor-actions">
+        <label class="switch-label small"><input class="sponsor-enabled" type="checkbox"> เปิดใช้</label>
+        <button class="btn tiny add-to-playlist" type="button">ใส่ Playlist</button>
+        <button class="btn tiny danger remove-sponsor" type="button">ลบ</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="https://unpkg.com/obs-websocket-js@5.0.4/dist/obs-ws.min.js"></script>
+  <script src="./assets/sponsor-shared.js"></script>
+  <script src="./assets/sponsor-control.js"></script>
+</body>
+</html>
