@@ -1,68 +1,1057 @@
-(()=>{
-'use strict';
-const DB='PepsSponsorDockDB_v2',STORE='images',KEY='peps_sponsor_dock_state_v2',CH='peps_sponsor_dock_channel_v2';
-const OBS_LIB='https://cdn.jsdelivr.net/npm/obs-websocket-js@5.0.4/dist/obs-ws.min.js';
-const MODES=[['grid','แบบตาราง เรียงด้านล่าง'],['rotator','แบบหมุนวน ทีละภาพ'],['ticker','แบบตัววิ่ง เลื่อนซ้าย'],['bounce','แบบเด้ง DVD Saver'],['rain','แบบฝนตก หล่นจากฟ้า'],['cover3d','แบบ 3D Cover Flow'],['pulse','แบบชีพจร กระเพื่อม'],['spin','แบบหมุนรอบ'],['wiggle','แบบสั่น ดุ๊กดิ๊ก'],['float','แบบลอยตัว'],['swing','แบบแกว่งลูกตุ้ม'],['wave','แบบคลื่นโลโก้'],['orbit','แบบโคจรรอบกลาง'],['spotlight','แบบสปอตไลท์ทีละโลโก้']];
-const MODE_LABEL=Object.fromEntries([...MODES,['auto','อัตโนมัติ ตามค่าหน้า Control']]);
-const MODE_IDS=MODES.map(x=>x[0]);
-const baseState={mode:'grid',images:[],groups:[{id:'all',name:'รวมทั้งหมด',imageIds:[]}],activeGroupId:'all',modeGroups:{},size:180,radius:0,shadow:.55,gap:24,rotatorX:'center',rotatorY:'bottom',margin:34,stayTime:2.5,effect:'fade',tickerSpeed:42,tickerY:900,bounceSpeed:5,rainSpeed:5,rainDensity:5,coverSpeed:1600,coverOpacity:.35,coverDir:'right',pulseSpeed:900,spinSpeed:2200,wiggleSpeed:700,floatSpeed:2000,swingSpeed:1800,waveSpeed:1800,waveHeight:28,orbitSpeed:7000,orbitRadius:220,orbitDir:'right',spotlightSpeed:2500,spotlightDim:.25,revision:Date.now()};
-const $=id=>document.getElementById(id),params=new URLSearchParams(location.search),urlMode=params.get('mode')||'auto',urlGroup=params.get('group')||'',isControl=urlMode==='control';
-let state=normalize(loadRaw()),urls=new Map(),obs=null,obsReady=false,rotIndex=0,timers=[],bounceStop=false;
-function loadRaw(){try{return JSON.parse(localStorage.getItem(KEY)||'{}')}catch{return{}}}
-function normalize(raw){const s={...baseState,...raw};s.images=Array.isArray(s.images)?s.images.filter(x=>x&&x.id):[];if(!Array.isArray(s.groups)||!s.groups.length){s.groups=[{id:'all',name:'รวมทั้งหมด',imageIds:s.images.map(x=>x.id)}]}s.groups=s.groups.map((g,i)=>({id:g.id||('group_'+i),name:g.name||('กลุ่ม '+(i+1)),imageIds:Array.isArray(g.imageIds)?[...new Set(g.imageIds.filter(Boolean))]:[]}));if(!s.groups.find(g=>g.id===s.activeGroupId))s.activeGroupId=s.groups[0].id;s.modeGroups={...(s.modeGroups||{})};MODE_IDS.forEach(m=>{if(!s.modeGroups[m]||!s.groups.find(g=>g.id===s.modeGroups[m]))s.modeGroups[m]=s.activeGroupId});return s}
-function saveState(){state=normalize(state);state.revision=Date.now();localStorage.setItem(KEY,JSON.stringify(state));broadcast()}
-function broadcast(){try{const c=new BroadcastChannel(CH);c.postMessage({state});c.close()}catch{}}
-function subscribe(){try{const c=new BroadcastChannel(CH);c.onmessage=e=>{if(e.data&&e.data.state){state=normalize(e.data.state);if(!isControl)renderDisplay()}}}catch{}window.addEventListener('storage',e=>{if(e.key===KEY){state=normalize(loadRaw());if(!isControl)renderDisplay()}})}
-function toast(text){const t=$('toast');if(!t)return;t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1300)}
-function uid(p='id'){return p+'_'+Date.now()+'_'+Math.random().toString(16).slice(2)}
-function modeLabel(mode){return MODE_LABEL[mode]||mode}function groupName(id){return (state.groups.find(g=>g.id===id)||{}).name||'ไม่พบกลุ่ม'}
-function activeGroup(){return state.groups.find(g=>g.id===state.activeGroupId)||state.groups[0]}
-function groupOptions(selected){return state.groups.map(g=>`<option value="${g.id}" ${g.id===selected?'selected':''}>${esc(g.name)}</option>`).join('')}
-function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function clearTimers(){timers.forEach(t=>clearTimeout(t));timers.forEach(t=>clearInterval(t));timers=[];bounceStop=true}
-function injectCss(){if($('peps-sponsor-v3-css'))return;const css=`
+(() => {
+  'use strict';
+  const DB = 'PepsSponsorDockDB_v2', STORE = 'images', KEY = 'peps_sponsor_dock_state_v2', CH = 'peps_sponsor_dock_channel_v2';
+  const OBS_LIB = 'https://cdn.jsdelivr.net/npm/obs-websocket-js@5.0.4/dist/obs-ws.min.js';
+  const MODES = [
+    ['grid', 'แบบตาราง เรียงด้านล่าง'],
+    ['rotator', 'แบบหมุนวน ทีละภาพ'],
+    ['ticker', 'แบบตัววิ่ง เลื่อนซ้าย'],
+    ['bounce', 'แบบเด้ง DVD Saver'],
+    ['rain', 'แบบฝนตก หล่นจากฟ้า'],
+    ['cover3d', 'แบบ 3D Cover Flow'],
+    ['pulse', 'แบบชีพจร กระเพื่อม'],
+    ['spin', 'แบบหมุนรอบ'],
+    ['wiggle', 'แบบสั่น ดุ๊กดิ๊ก'],
+    ['float', 'แบบลอยตัว'],
+    ['swing', 'แบบแกว่งลูกตุ้ม'],
+    ['wave', 'แบบคลื่นโลโก้'],
+    ['orbit', 'แบบโคจรรอบกลาง'],
+    ['spotlight', 'แบบสปอตไลท์ทีละโลโก้']
+  ];
+  const MODE_LABEL = Object.fromEntries([...MODES, ['auto', 'อัตโนมัติ ตามค่าหน้า Control']]);
+  const MODE_IDS = MODES.map(x => x[0]);
+
+  const baseState = {
+    mode: 'grid',
+    images: [],
+    groups: [{ id: 'all', name: 'รวมทั้งหมด', imageIds: [] }],
+    activeGroupId: 'all',
+    modeGroups: {},
+    size: 180,
+    radius: 0,
+    shadow: .55,
+    gap: 24,
+    rotatorX: 'center',
+    rotatorY: 'bottom',
+    margin: 34,
+    stayTime: 2.5,
+    effect: 'fade',
+    tickerSpeed: 42,
+    tickerY: 900,
+    bounceSpeed: 5,
+    rainSpeed: 5,
+    rainDensity: 5,
+    coverSpeed: 1600,
+    coverOpacity: .35,
+    coverDir: 'right',
+    pulseSpeed: 900,
+    spinSpeed: 2200,
+    wiggleSpeed: 700,
+    floatSpeed: 2000,
+    swingSpeed: 1800,
+    waveSpeed: 1800,
+    waveHeight: 28,
+    orbitSpeed: 7000,
+    orbitRadius: 220,
+    orbitDir: 'right',
+    spotlightSpeed: 2500,
+    spotlightDim: .25,
+    revision: Date.now()
+  };
+
+  const $ = id => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  const urlMode = params.get('mode') || 'auto';
+  const urlGroup = params.get('group') || '';
+  const isControl = urlMode === 'control';
+
+  let state = normalize(loadRaw());
+  let urls = new Map();
+  let obs = null;
+  let obsReady = false;
+  let rotIndex = 0;
+  let timers = [];
+  let bounceStop = false;
+
+  function loadRaw() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  function getSetting(mode, key) {
+    if (state && state.modeSettings && state.modeSettings[mode] && state.modeSettings[mode][key] !== undefined) {
+      return state.modeSettings[mode][key];
+    }
+    return baseState[key] !== undefined ? baseState[key] : (state && state[key] !== undefined ? state[key] : undefined);
+  }
+
+  function setSetting(mode, key, value) {
+    state.modeSettings = state.modeSettings || {};
+    state.modeSettings[mode] = state.modeSettings[mode] || {};
+    state.modeSettings[mode][key] = value;
+  }
+
+  function normalize(raw) {
+    const s = { ...baseState, ...raw };
+    s.images = Array.isArray(s.images) ? s.images.filter(x => x && x.id) : [];
+    if (!Array.isArray(s.groups) || !s.groups.length) {
+      s.groups = [{ id: 'all', name: 'รวมทั้งหมด', imageIds: s.images.map(x => x.id) }];
+    }
+    s.groups = s.groups.map((g, i) => ({
+      id: g.id || ('group_' + i),
+      name: g.name || ('กลุ่ม ' + (i + 1)),
+      imageIds: Array.isArray(g.imageIds) ? [...new Set(g.imageIds.filter(Boolean))] : []
+    }));
+    if (!s.groups.find(g => g.id === s.activeGroupId)) s.activeGroupId = s.groups[0].id;
+    s.modeGroups = { ...(s.modeGroups || {}) };
+    MODE_IDS.forEach(m => {
+      if (!s.modeGroups[m] || !s.groups.find(g => g.id === s.modeGroups[m])) s.modeGroups[m] = s.activeGroupId;
+    });
+
+    // Normalize mode-specific settings!
+    s.modeSettings = s.modeSettings || {};
+    MODE_IDS.forEach(m => {
+      s.modeSettings[m] = s.modeSettings[m] || {};
+      const defaultPosY = (m === 'rain') ? 'top' : (['orbit', 'spotlight', 'bounce'].includes(m) ? 'center' : 'bottom');
+      const defaultGridSpeed = 1000;
+
+      s.modeSettings[m] = {
+        size: s.modeSettings[m].size !== undefined ? s.modeSettings[m].size : (raw.size !== undefined ? raw.size : baseState.size),
+        radius: s.modeSettings[m].radius !== undefined ? s.modeSettings[m].radius : (raw.radius !== undefined ? raw.radius : baseState.radius),
+        shadow: s.modeSettings[m].shadow !== undefined ? s.modeSettings[m].shadow : (raw.shadow !== undefined ? raw.shadow : baseState.shadow),
+        gap: s.modeSettings[m].gap !== undefined ? s.modeSettings[m].gap : (raw.gap !== undefined ? raw.gap : baseState.gap),
+        rotatorX: s.modeSettings[m].rotatorX !== undefined ? s.modeSettings[m].rotatorX : (raw.rotatorX !== undefined ? raw.rotatorX : baseState.rotatorX),
+        rotatorY: s.modeSettings[m].rotatorY !== undefined ? s.modeSettings[m].rotatorY : (raw.rotatorY !== undefined ? raw.rotatorY : baseState.rotatorY),
+        margin: s.modeSettings[m].margin !== undefined ? s.modeSettings[m].margin : (raw.margin !== undefined ? raw.margin : baseState.margin),
+        stayTime: s.modeSettings[m].stayTime !== undefined ? s.modeSettings[m].stayTime : (raw.stayTime !== undefined ? raw.stayTime : baseState.stayTime),
+        effect: s.modeSettings[m].effect !== undefined ? s.modeSettings[m].effect : (raw.effect !== undefined ? raw.effect : baseState.effect),
+        tickerSpeed: s.modeSettings[m].tickerSpeed !== undefined ? s.modeSettings[m].tickerSpeed : (raw.tickerSpeed !== undefined ? raw.tickerSpeed : baseState.tickerSpeed),
+        tickerY: s.modeSettings[m].tickerY !== undefined ? s.modeSettings[m].tickerY : (raw.tickerY !== undefined ? raw.tickerY : baseState.tickerY),
+        tickerX: s.modeSettings[m].tickerX !== undefined ? s.modeSettings[m].tickerX : 'center',
+        bounceSpeed: s.modeSettings[m].bounceSpeed !== undefined ? s.modeSettings[m].bounceSpeed : (raw.bounceSpeed !== undefined ? raw.bounceSpeed : baseState.bounceSpeed),
+        rainSpeed: s.modeSettings[m].rainSpeed !== undefined ? s.modeSettings[m].rainSpeed : (raw.rainSpeed !== undefined ? raw.rainSpeed : baseState.rainSpeed),
+        rainDensity: s.modeSettings[m].rainDensity !== undefined ? s.modeSettings[m].rainDensity : (raw.rainDensity !== undefined ? raw.rainDensity : baseState.rainDensity),
+        coverSpeed: s.modeSettings[m].coverSpeed !== undefined ? s.modeSettings[m].coverSpeed : (raw.coverSpeed !== undefined ? raw.coverSpeed : baseState.coverSpeed),
+        coverOpacity: s.modeSettings[m].coverOpacity !== undefined ? s.modeSettings[m].coverOpacity : (raw.coverOpacity !== undefined ? raw.coverOpacity : baseState.coverOpacity),
+        coverDir: s.modeSettings[m].coverDir !== undefined ? s.modeSettings[m].coverDir : (raw.coverDir !== undefined ? raw.coverDir : baseState.coverDir),
+        pulseSpeed: s.modeSettings[m].pulseSpeed !== undefined ? s.modeSettings[m].pulseSpeed : (raw.pulseSpeed !== undefined ? raw.pulseSpeed : baseState.pulseSpeed),
+        spinSpeed: s.modeSettings[m].spinSpeed !== undefined ? s.modeSettings[m].spinSpeed : (raw.spinSpeed !== undefined ? raw.spinSpeed : baseState.spinSpeed),
+        wiggleSpeed: s.modeSettings[m].wiggleSpeed !== undefined ? s.modeSettings[m].wiggleSpeed : (raw.wiggleSpeed !== undefined ? raw.wiggleSpeed : baseState.wiggleSpeed),
+        floatSpeed: s.modeSettings[m].floatSpeed !== undefined ? s.modeSettings[m].floatSpeed : (raw.floatSpeed !== undefined ? raw.floatSpeed : baseState.floatSpeed),
+        swingSpeed: s.modeSettings[m].swingSpeed !== undefined ? s.modeSettings[m].swingSpeed : (raw.swingSpeed !== undefined ? raw.swingSpeed : baseState.swingSpeed),
+        waveSpeed: s.modeSettings[m].waveSpeed !== undefined ? s.modeSettings[m].waveSpeed : (raw.waveSpeed !== undefined ? raw.waveSpeed : baseState.waveSpeed),
+        waveHeight: s.modeSettings[m].waveHeight !== undefined ? s.modeSettings[m].waveHeight : (raw.waveHeight !== undefined ? raw.waveHeight : baseState.waveHeight),
+        orbitSpeed: s.modeSettings[m].orbitSpeed !== undefined ? s.modeSettings[m].orbitSpeed : (raw.orbitSpeed !== undefined ? raw.orbitSpeed : baseState.orbitSpeed),
+        orbitRadius: s.modeSettings[m].orbitRadius !== undefined ? s.modeSettings[m].orbitRadius : (raw.orbitRadius !== undefined ? raw.orbitRadius : baseState.orbitRadius),
+        orbitDir: s.modeSettings[m].orbitDir !== undefined ? s.modeSettings[m].orbitDir : (raw.orbitDir !== undefined ? raw.orbitDir : baseState.orbitDir),
+        spotlightSpeed: s.modeSettings[m].spotlightSpeed !== undefined ? s.modeSettings[m].spotlightSpeed : (raw.spotlightSpeed !== undefined ? raw.spotlightSpeed : baseState.spotlightSpeed),
+        spotlightDim: s.modeSettings[m].spotlightDim !== undefined ? s.modeSettings[m].spotlightDim : (raw.spotlightDim !== undefined ? raw.spotlightDim : baseState.spotlightDim),
+        posX: s.modeSettings[m].posX !== undefined ? s.modeSettings[m].posX : 'center',
+        posY: s.modeSettings[m].posY !== undefined ? s.modeSettings[m].posY : defaultPosY,
+        gridSpeed: s.modeSettings[m].gridSpeed !== undefined ? s.modeSettings[m].gridSpeed : defaultGridSpeed
+      };
+    });
+
+    return s;
+  }
+
+  function saveState() {
+    state = normalize(state);
+    state.revision = Date.now();
+    localStorage.setItem(KEY, JSON.stringify(state));
+    broadcast();
+  }
+
+  function broadcast() {
+    try {
+      const c = new BroadcastChannel(CH);
+      c.postMessage({ state });
+      c.close();
+    } catch { }
+  }
+
+  function subscribe() {
+    try {
+      const c = new BroadcastChannel(CH);
+      c.onmessage = e => {
+        if (e.data && e.data.state) {
+          state = normalize(e.data.state);
+          if (!isControl) renderDisplay();
+        }
+      };
+    } catch { }
+    window.addEventListener('storage', e => {
+      if (e.key === KEY) {
+        state = normalize(loadRaw());
+        if (!isControl) renderDisplay();
+      }
+    });
+  }
+
+  function toast(text) {
+    const t = $('toast');
+    if (!t) return;
+    t.textContent = text;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 1300);
+  }
+
+  function uid(p = 'id') {
+    return p + '_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+  }
+
+  function modeLabel(mode) {
+    return MODE_LABEL[mode] || mode;
+  }
+
+  function groupName(id) {
+    return (state.groups.find(g => g.id === id) || {}).name || 'ไม่พบกลุ่ม';
+  }
+
+  function activeGroup() {
+    return state.groups.find(g => g.id === state.activeGroupId) || state.groups[0];
+  }
+
+  function groupOptions(selected) {
+    return state.groups.map(g => `<option value="${g.id}" ${g.id === selected ? 'selected' : ''}>${esc(g.name)}</option>`).join('');
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, m => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[m]));
+  }
+
+  function clearTimers() {
+    timers.forEach(t => clearTimeout(t));
+    timers.forEach(t => clearInterval(t));
+    timers = [];
+    bounceStop = true;
+  }
+
+  function injectCss() {
+    if ($('peps-sponsor-v3-css')) return;
+    const css = `
 :root{--bg:#090909;--panel:#171717;--line:rgba(255,255,255,.12);--line-o:rgba(255,90,0,.38);--text:#fff;--muted:#b8b8b8;--orange:#ff5a00;--orange2:#ff8a2a;--danger:#c63d3a;--success:#58aa46}
 *{box-sizing:border-box}body{margin:0;font-family:'IBM Plex Sans Thai',system-ui,sans-serif;color:var(--text);overflow:hidden;background:transparent}body.control{overflow-y:auto;background:radial-gradient(circle at 88% -10%,rgba(255,90,0,.30),transparent 32%),linear-gradient(180deg,#080808,#0d0d0d 45%,#080808)}body.control:before{content:'';position:fixed;inset:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:48px 48px}button,input,select{font:inherit}.wrap{padding:12px;max-width:920px;margin:auto}.header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0 15px;border-bottom:1px solid var(--line);margin-bottom:14px}.brand{display:flex;align-items:center;gap:12px;min-width:0}.brand img{width:54px;height:54px;object-fit:contain;filter:drop-shadow(0 10px 18px #0008)}.brand h1{margin:0;font:900 20px 'Prompt',system-ui;color:#fff;line-height:1}.brand span{color:#ffbf9b;font-size:12px}.badge{border:1px solid var(--line-o);background:rgba(255,90,0,.08);color:#ffbf9b;border-radius:999px;padding:7px 10px;font:700 12px 'Chakra Petch',system-ui;white-space:nowrap}.section{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.035)),var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px;box-shadow:0 18px 54px #0006}h2{font:800 15px 'Prompt',system-ui;margin:0 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line)}label{display:block;margin-top:10px;margin-bottom:4px;color:#ffd4bc;font-size:12px;font-weight:700}.row{display:flex;gap:10px}.col{flex:1}.hidden{display:none!important}select,input[type=text],input[type=password],.url-code{width:100%;padding:10px;background:rgba(0,0,0,.28);color:white;border:1px solid var(--line);border-radius:14px;outline:none}select:focus,input:focus{border-color:rgba(255,90,0,.7);box-shadow:0 0 0 3px rgba(255,90,0,.14)}select option{background:#151515;color:#fff}input[type=range]{width:100%;height:6px;background:#3a3a3a;border-radius:99px;outline:0;appearance:none}input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border-radius:50%;background:linear-gradient(135deg,var(--orange),var(--orange2));box-shadow:0 0 18px rgba(255,90,0,.75)}.readout{float:right;color:#ffbf9b;font:700 11px 'Chakra Petch',system-ui}.btn{width:100%;min-height:42px;border:1px solid transparent;border-radius:999px;padding:9px 13px;margin-top:5px;color:white;font:800 12px 'Prompt',system-ui;cursor:pointer;transition:.2s}.btn:hover{transform:translateY(-2px);filter:brightness(1.08)}.primary{background:linear-gradient(135deg,var(--orange),var(--orange2));box-shadow:0 15px 42px rgba(255,90,0,.28)}.success{background:linear-gradient(135deg,#4a9d38,#70c35d)}.danger{background:rgba(198,61,58,.16);border-color:rgba(255,100,100,.35);color:#ffb2b2}.outline{background:rgba(255,90,0,.05);border-color:var(--line-o);color:#ffbf9b}.menu{display:flex;gap:10px}.drop{border:2px dashed rgba(255,90,0,.32);border-radius:18px;padding:22px;min-height:120px;text-align:center;color:#888;background:rgba(255,90,0,.035);display:grid;place-items:center;cursor:pointer}.drop.drag{border-color:var(--orange);background:rgba(255,90,0,.10);color:white}.folder{font-size:28px}.count{color:#ff8a2a;font-weight:900}.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px;margin-top:10px}.thumb{position:relative;background:#111;border:1px solid var(--line);border-radius:12px;padding:6px}.thumb img{width:100%;height:54px;object-fit:contain}.thumb .x{position:absolute;right:-5px;top:-5px;width:20px;height:20px;border:0;border-radius:50%;background:var(--danger);color:white}.thumb .del{font-size:10px;min-height:24px;margin-top:6px;padding:3px 6px}.map-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr);gap:8px;align-items:center;margin:8px 0}.map-row b{font-size:12px}.hint{color:var(--muted);font-size:12px;line-height:1.6}.modal{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.82);z-index:50;backdrop-filter:blur(12px)}.modal.open{display:grid}.modal-box{width:min(640px,92vw);max-height:86vh;overflow:auto;border:1px solid var(--line-o);border-radius:24px;background:linear-gradient(180deg,#202020,#090909);padding:20px;box-shadow:0 34px 90px #0009}.close{float:right;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);background:#ffffff10;color:white;font-size:22px}.url-item{background:#ffffff0b;border:1px solid var(--line);border-radius:16px;padding:14px;margin:10px 0}.url-grid{display:grid;grid-template-columns:1fr 70px 92px;gap:8px}.status{font-size:12px;padding:9px;margin-top:12px;border-radius:14px;text-align:center}.bad{background:rgba(198,61,58,.16);color:#ffb2b2;border:1px solid rgba(255,100,100,.35)}.good{background:rgba(80,180,95,.14);color:#aaffbd;border:1px solid rgba(100,255,130,.28)}#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;background:linear-gradient(135deg,var(--orange),var(--orange2));color:white;padding:10px 20px;border-radius:999px;font-weight:800;opacity:0;transition:.25s}#toast.show{opacity:1;bottom:38px}
 #display{position:fixed;inset:0;overflow:hidden;background:transparent}.logo{object-fit:contain;filter:drop-shadow(0 0 calc(var(--shadow)*18px) rgba(0,0,0,.85));border-radius:var(--radius)}.grid-mode,.anim-mode,.wave-mode{position:absolute;left:0;right:0;bottom:0;padding:20px;display:flex;justify-content:center;align-items:flex-end;gap:var(--gap);flex-wrap:wrap}.ticker-mode{position:absolute;left:0;width:100%;white-space:nowrap;overflow:hidden}.ticker-track{display:inline-flex;gap:var(--gap);animation:ticker linear infinite}@keyframes ticker{to{transform:translateX(-50%)}}.rotator-mode{position:absolute;inset:0;display:flex;overflow:hidden;pointer-events:none}.rotator-inner{display:flex;align-items:center;justify-content:center;position:relative}.rotator-inner img{position:absolute;opacity:0;transition:opacity .5s,transform .5s,filter .5s;max-width:100%;max-height:100%;object-fit:contain}.rotator-inner img.active{position:relative;opacity:1}.eff-zoom img{transform:scale(.5)}.eff-zoom img.active{transform:scale(1)}.eff-slide img{transform:translateY(28px)}.eff-slide img.active{transform:translateY(0)}.eff-flip img{transform:rotateY(90deg)}.eff-flip img.active{transform:rotateY(0)}.eff-drop img{transform:translateY(-110px) scale(1.35)}.eff-drop img.active{transform:translateY(0) scale(1)}.eff-spin-in img{transform:rotate(-180deg) scale(.2)}.eff-spin-in img.active{transform:rotate(0) scale(1)}.eff-blur img{filter:blur(20px)}.eff-blur img.active{filter:blur(0) drop-shadow(0 0 calc(var(--shadow)*18px) rgba(0,0,0,.85))}.bounce-mode img{position:absolute}.rain-mode{position:absolute;inset:0;overflow:hidden}.rain-drop{position:absolute;top:0;animation:rainFall var(--fall,4s) linear forwards;will-change:transform,opacity}@keyframes rainFall{0%{transform:translate3d(0,-260px,0) rotate(-5deg);opacity:0}8%{opacity:1}100%{transform:translate3d(var(--drift,0px),calc(100vh + 330px),0) rotate(12deg);opacity:.9}}.cover-mode{position:absolute;left:0;right:0;bottom:50px;height:330px;display:flex;justify-content:center;align-items:center;perspective:1000px}.cover-card{position:absolute;transition:all .58s ease-out}.pulse .logo{animation:pulse var(--pulseSpeed) ease-in-out infinite}.spin .logo{animation:spin var(--spinSpeed) linear infinite}.wiggle .logo{animation:wiggle var(--wiggleSpeed) ease-in-out infinite}.float .logo{animation:float var(--floatSpeed) ease-in-out infinite}.swing .logo{transform-origin:top center;animation:swing var(--swingSpeed) ease-in-out infinite}.wave-mode .logo{animation:wave var(--waveSpeed) ease-in-out infinite;animation-delay:var(--delay)}@keyframes pulse{50%{transform:scale(1.12)}}@keyframes spin{to{transform:rotate(360deg)}}@keyframes wiggle{25%{transform:rotate(-4deg)}75%{transform:rotate(4deg)}}@keyframes float{50%{transform:translateY(-22px)}}@keyframes swing{25%{transform:rotate(5deg)}75%{transform:rotate(-5deg)}}@keyframes wave{50%{transform:translateY(calc(var(--waveHeight)*-1))}}.orbit-mode{position:absolute;inset:0;display:grid;place-items:center}.orbit-ring{position:relative;width:1px;height:1px;animation:orbit var(--orbitSpeed) linear infinite}.orbit-ring.left{animation-direction:reverse}.orbit-item{position:absolute;left:0;top:0;transform-origin:0 0}.orbit-item .logo{transform:translate(-50%,-50%)}@keyframes orbit{to{transform:rotate(360deg)}}.spotlight-mode{position:absolute;inset:0;display:grid;place-items:center}.spot-main .logo{width:calc(var(--size)*1.45)!important;max-height:calc(var(--size)*1.45)!important}.spot-strip{position:absolute;left:0;right:0;bottom:36px;display:flex;justify-content:center;gap:14px}.spot-strip img{width:72px!important;height:46px!important;opacity:var(--dim);transition:.25s}.spot-strip img.active{opacity:1;transform:scale(1.18)}@media(max-width:620px){.row,.menu,.map-row{display:block}.url-grid{grid-template-columns:1fr}.brand h1{font-size:16px}}
-`;const st=document.createElement('style');st.id='peps-sponsor-v3-css';st.textContent=css;document.head.appendChild(st)}
-function renderShell(){document.body.className=isControl?'control':'display';const app=document.getElementById('app')||document.body.appendChild(document.createElement('div'));app.id='app';if(!isControl){app.innerHTML='<div id="display"></div>';return}app.innerHTML=`<div class="wrap"><div class="header"><div class="brand"><img src="https://pepsproduction.github.io/pepslive-tools/assets/pepslive-logo.png" alt="PepsLive"><div><h1>PepsLive Sponsor Dock</h1><span>ระบบจัดการสปอนเซอร์สำหรับ OBS</span></div></div><div class="badge">กลุ่มโลโก้</div></div><div class="section"><h2>กลุ่มโลโก้</h2><label>กลุ่มที่กำลังจัดการ</label><select id="groupSelect"></select><div class="row"><button id="addGroup" class="btn primary">เพิ่มกลุ่ม</button><button id="renameGroup" class="btn outline">เปลี่ยนชื่อ</button><button id="deleteGroup" class="btn danger">ลบกลุ่ม</button></div><div class="row"><button id="footballPreset" class="btn success">สร้างกลุ่มมาตรฐานงานกีฬา</button></div><p class="hint">แนะนำ: Main Sponsor ใช้กับ 3D / Partner ใช้กับ Ticker หรือ Float / Goal Sponsor ใช้กับ Spotlight</p></div><div class="section"><h2>จัดการรูปภาพในกลุ่มนี้</h2><div id="drop" class="drop"><div><div class="folder">📂</div><div>ลากรูปโลโก้มาวางในกลุ่มนี้</div><div id="count" class="count">0 รูปในกลุ่มนี้</div></div></div><input id="file" type="file" accept="image/*" multiple hidden><div id="thumbs" class="thumbs"></div><button id="reset" class="btn danger">ล้างรูปทั้งหมดและรีเซ็ต</button></div><div class="section"><h2>โหมดแสดงผล</h2><select id="mode">${MODES.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></div><div class="section"><h2>ตั้งค่า</h2><div id="controls"></div></div><div class="section"><h2>ผูกโหมดกับกลุ่มโลโก้</h2><div id="modeGroupMap"></div><p class="hint">URL ของแต่ละโหมดจะดึงกลุ่มที่ผูกไว้โดยอัตโนมัติ หรือใช้ URL แบบ &group= เพื่อบังคับเลือกกลุ่มเฉพาะ Source ได้</p></div><div class="section"><button id="sync" class="btn success">บังคับซิงก์หน้าจอ</button></div><div class="menu"><button id="help" class="btn outline">วิธีใช้งาน</button><button id="support" class="btn outline">สนับสนุน</button></div></div><div id="helpModal" class="modal"><div class="modal-box"><button class="close" data-close="helpModal">×</button><h2>วิธีใช้งานและสร้าง URL</h2><p class="hint">สร้าง Browser Source ขนาด 1920x1080 ใน OBS แล้วคัดลอก URL ด้านล่าง หรือกดเพิ่มเข้า OBS ผ่าน WebSocket</p><div id="urls"></div><hr><label>พอร์ต OBS WebSocket</label><div class="row"><input id="obsPort" type="text" value="4455"><input id="obsPass" type="password" placeholder="รหัสผ่าน ถ้ามี"></div><button id="connectObs" class="btn primary">เชื่อมต่อ OBS</button><div id="obsStatus" class="status bad">ยังไม่ได้เชื่อมต่อ OBS WebSocket</div></div></div><div id="supportModal" class="modal"><div class="modal-box"><button class="close" data-close="supportModal">×</button><h2>สนับสนุน</h2><p>PepsLive Sponsor Dock สำหรับงานไลฟ์กีฬาและ OBS</p><a class="btn primary" href="https://heylink.me/pepslive/" target="_blank">เปิดหน้าสนับสนุน</a></div></div><div id="toast">คัดลอกแล้ว</div>`}
-const commonControls=[['size','ขนาดรูป','range',50,800,1,'px'],['radius','มุมโค้ง','range',0,50,1,''],['shadow','เงา','range',0,1,.1,'']];
-const modeControls={grid:[['gap','ระยะห่าง','range',0,140,1,'px']],rotator:[['rotatorX','ตำแหน่งแนวนอน','select',[['left','ซ้าย'],['center','กลาง'],['right','ขวา']]],['rotatorY','ตำแหน่งแนวตั้ง','select',[['top','บน'],['center','กลาง'],['bottom','ล่าง']]],['margin','ระยะจากขอบ','range',0,220,1,'px'],['stayTime','เวลาค้างต่อภาพ','range',.5,10,.5,' วิ'],['effect','เอฟเฟกต์เปลี่ยนภาพ','select',[['fade','เฟดเข้าออก'],['slide','เลื่อนขึ้น'],['zoom','ซูมเข้า'],['flip','พลิก 3D'],['drop','เด้งลง'],['spin-in','หมุนเข้า'],['blur','เบลอแล้วชัด']]]],ticker:[['tickerSpeed','ความเร็ว','range',5,200,1,''],['gap','ระยะห่าง','range',0,200,1,'px'],['tickerY','ตำแหน่งแนวตั้ง','range',0,1000,1,'px']],bounce:[['bounceSpeed','ความเร็ว','range',1,20,1,'']],rain:[['rainSpeed','ความเร็วตอนตก','range',1,20,1,''],['rainDensity','ความหนาแน่น','range',1,12,1,'']],cover3d:[['coverSpeed','ความเร็วหมุน','range',500,5000,100,' ms'],['coverOpacity','ความชัดของโลโก้ด้านหลัง','range',.05,1,.05,'%'],['coverDir','ทิศทางหมุน','select',[['right','หมุนไปทางขวา'],['left','หมุนไปทางซ้าย']]]],pulse:[['pulseSpeed','ความเร็วกระเพื่อม','range',200,3000,100,' ms'],['gap','ระยะห่าง','range',0,140,1,'px']],spin:[['spinSpeed','ความเร็วหมุน','range',500,5000,100,' ms'],['gap','ระยะห่าง','range',0,140,1,'px']],wiggle:[['wiggleSpeed','ความเร็วสั่น','range',100,2000,100,' ms'],['gap','ระยะห่าง','range',0,140,1,'px']],float:[['floatSpeed','ความเร็วลอย','range',500,4000,100,' ms'],['gap','ระยะห่าง','range',0,140,1,'px']],swing:[['swingSpeed','ความเร็วแกว่ง','range',500,4000,100,' ms'],['gap','ระยะห่าง','range',0,140,1,'px']],wave:[['waveSpeed','ความเร็วคลื่น','range',500,5000,100,' ms'],['waveHeight','ความสูงของคลื่น','range',4,90,1,'px'],['gap','ระยะห่าง','range',0,140,1,'px']],orbit:[['orbitSpeed','ความเร็วโคจร','range',1200,16000,100,' ms'],['orbitRadius','รัศมีวงโคจร','range',80,520,1,'px'],['orbitDir','ทิศทางหมุน','select',[['right','หมุนไปทางขวา'],['left','หมุนไปทางซ้าย']]]],spotlight:[['spotlightSpeed','เวลาสลับโลโก้','range',700,8000,100,' ms'],['spotlightDim','ความจางของโลโก้ที่ไม่ได้เลือก','range',.05,1,.05,'%']]};
-function renderControls(){const box=$('controls');if(!box)return;const controls=[...commonControls,...(modeControls[state.mode]||[])];box.innerHTML=controls.map(renderControl).join('');controls.forEach(([key])=>{const el=$('ctl_'+key);if(!el)return;el.value=state[key];el.addEventListener('input',()=>{state[key]=el.type==='range'?Number(el.value):el.value;updateReadouts();saveState()});el.addEventListener('change',()=>{state[key]=el.type==='range'?Number(el.value):el.value;updateReadouts();saveState()})});updateReadouts()}
-function renderControl(c){const[key,label,type]=c;if(type==='select')return`<label>${label}</label><select id="ctl_${key}">${c[3].map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select>`;const[,,,min,max,step]=c;return`<label>${label} <span id="ro_${key}" class="readout"></span></label><input type="range" id="ctl_${key}" min="${min}" max="${max}" step="${step}">`}
-function updateReadouts(){[...commonControls,...(modeControls[state.mode]||[])].forEach(c=>{const[key,,type,,,,suffix]=c,ro=$('ro_'+key);if(!ro||type!=='range')return;if(key==='coverOpacity'||key==='spotlightDim')ro.textContent=Math.round(state[key]*100)+'%';else ro.textContent=state[key]+(suffix||'')})}
-function renderGroupUI(){const sel=$('groupSelect');if(!sel)return;sel.innerHTML=groupOptions(state.activeGroupId);renderModeGroupMap();renderThumbs()}
-function renderModeGroupMap(){const box=$('modeGroupMap');if(!box)return;box.innerHTML=MODES.map(([mode,label])=>`<div class="map-row"><b>${label}</b><select data-mode-group="${mode}">${groupOptions(state.modeGroups[mode]||state.activeGroupId)}</select></div>`).join('');box.querySelectorAll('[data-mode-group]').forEach(sel=>{sel.onchange=()=>{state.modeGroups[sel.dataset.modeGroup]=sel.value;saveState();toast('บันทึกกลุ่มของโหมดแล้ว')}})}
-function ensureGroup(id,name){let g=state.groups.find(x=>x.id===id);if(!g){g={id,name,imageIds:[]};state.groups.push(g)}return g}
-function createFootballPreset(){const main=ensureGroup('main','Main Sponsor');const partner=ensureGroup('partner','Partner Sponsor');const goal=ensureGroup('goal','Goal Sponsor');const half=ensureGroup('halftime','Half-time Sponsor');state.modeGroups.cover3d=main.id;state.modeGroups.spotlight=goal.id;state.modeGroups.ticker=partner.id;state.modeGroups.float=partner.id;state.modeGroups.wave=partner.id;state.modeGroups.orbit=half.id;state.modeGroups.grid=half.id;state.activeGroupId=main.id;saveState();renderGroupUI();toast('สร้างกลุ่มมาตรฐานงานกีฬาแล้ว')}
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB,1);req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(STORE))req.result.createObjectStore(STORE,{keyPath:'id'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
-async function putImage(id,file){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put({id,blob:file,name:file.name,type:file.type});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)})}
-async function getImageUrl(id){if(urls.has(id))return urls.get(id);const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const req=tx.objectStore(STORE).get(id);req.onsuccess=()=>{if(!req.result)return resolve('');const url=URL.createObjectURL(req.result.blob);urls.set(id,url);resolve(url)};req.onerror=()=>reject(req.error)})}
-async function deleteImage(id){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)})}
-async function clearImages(){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)})}
-async function addFiles(files){let count=0;const g=activeGroup();for(const file of files){if(!file.type.startsWith('image/'))continue;const id=uid('img');await putImage(id,file);state.images.push({id,name:file.name});g.imageIds.push(id);count++}saveState();await renderThumbs();toast('เพิ่มรูปเข้า '+g.name+' แล้ว '+count+' รูป')}
-async function renderThumbs(){const box=$('thumbs');if(!box)return;const g=activeGroup();$('count').textContent=(g.imageIds||[]).length+' รูปในกลุ่ม '+g.name;box.innerHTML='';for(const id of (g.imageIds||[])){const url=await getImageUrl(id);const item=document.createElement('div');item.className='thumb';item.innerHTML=`<img src="${url}" alt=""><button class="x" title="เอาออกจากกลุ่ม">×</button><button class="btn danger del">ลบถาวร</button>`;item.querySelector('.x').onclick=e=>{e.stopPropagation();g.imageIds=g.imageIds.filter(x=>x!==id);saveState();renderThumbs()};item.querySelector('.del').onclick=async e=>{e.stopPropagation();if(!confirm('ลบรูปนี้ออกจากทุกกลุ่มถาวร?'))return;state.groups.forEach(gr=>gr.imageIds=gr.imageIds.filter(x=>x!==id));state.images=state.images.filter(x=>x.id!==id);await deleteImage(id);saveState();renderThumbs()};box.appendChild(item)}}
-function bindControl(){$('mode').value=state.mode;$('mode').onchange=()=>{state.mode=$('mode').value;saveState();renderControls()};$('groupSelect').onchange=()=>{state.activeGroupId=$('groupSelect').value;saveState();renderGroupUI()};$('addGroup').onclick=()=>{const name=prompt('ชื่อกลุ่มโลโก้ใหม่','กลุ่มใหม่');if(!name)return;const id=uid('group');state.groups.push({id,name,imageIds:[]});state.activeGroupId=id;MODE_IDS.forEach(m=>{if(!state.modeGroups[m])state.modeGroups[m]=id});saveState();renderGroupUI();toast('เพิ่มกลุ่มแล้ว')};$('renameGroup').onclick=()=>{const g=activeGroup();const name=prompt('เปลี่ยนชื่อกลุ่ม',g.name);if(!name)return;g.name=name;saveState();renderGroupUI();toast('เปลี่ยนชื่อกลุ่มแล้ว')};$('deleteGroup').onclick=()=>{if(state.groups.length<=1){toast('ต้องมีอย่างน้อย 1 กลุ่ม');return}const g=activeGroup();if(!confirm('ลบกลุ่ม '+g.name+' ? รูปจริงจะยังไม่ถูกลบถาวร'))return;state.groups=state.groups.filter(x=>x.id!==g.id);state.activeGroupId=state.groups[0].id;Object.keys(state.modeGroups).forEach(m=>{if(state.modeGroups[m]===g.id)state.modeGroups[m]=state.activeGroupId});saveState();renderGroupUI();toast('ลบกลุ่มแล้ว')};$('footballPreset').onclick=createFootballPreset;const drop=$('drop'),file=$('file');drop.onclick=()=>file.click();file.onchange=e=>addFiles([...e.target.files]);['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>addFiles([...e.dataTransfer.files]));$('reset').onclick=async()=>{if(!confirm('ล้างรูปทั้งหมดและรีเซ็ตค่าตั้งค่า?'))return;await clearImages();state=normalize({...baseState});saveState();renderControls();renderGroupUI();toast('ล้างข้อมูลแล้ว')};$('sync').onclick=()=>{saveState();toast('ซิงก์หน้าจอแล้ว')};$('help').onclick=()=>{buildUrlList();$('helpModal').classList.add('open')};$('support').onclick=()=>$('supportModal').classList.add('open');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).classList.remove('open'));document.querySelectorAll('.modal').forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove('open')});$('connectObs').onclick=connectObs}
-function buildUrlList(){const box=$('urls');box.innerHTML='';[...MODES,['auto',MODE_LABEL.auto]].forEach(([mode,label])=>{const gid=mode==='auto'?state.activeGroupId:(state.modeGroups[mode]||state.activeGroupId);const url=pageUrl(mode,gid);const item=document.createElement('div');item.className='url-item';item.innerHTML=`<b>${label}</b><div class="hint">กลุ่ม: ${esc(groupName(gid))}</div><div class="url-grid"><input class="url-code" value="${url}" readonly><button class="btn primary" style="margin:0">คัดลอก</button><button class="btn success" style="margin:0">เพิ่ม OBS</button></div>`;const buttons=item.querySelectorAll('button');buttons[0].onclick=()=>{navigator.clipboard.writeText(url);toast('คัดลอก URL แล้ว')};buttons[1].onclick=()=>addObsSource(mode,url,gid);box.appendChild(item)})}
-function pageUrl(mode,gid){const u=new URL(location.href);u.search='';u.searchParams.set('mode',mode);if(gid)u.searchParams.set('group',gid);return u.href}
-function loadObsLib(){return new Promise((resolve,reject)=>{if(window.OBSWebSocket)return resolve();const s=document.createElement('script');s.src=OBS_LIB;s.onload=resolve;s.onerror=()=>reject(new Error('โหลด OBS WebSocket library ไม่สำเร็จ'));document.head.appendChild(s)})}
-function setObsStatus(text,good){const st=$('obsStatus');st.className='status '+(good?'good':'bad');st.textContent=text}
-async function connectObs(){setObsStatus('กำลังเชื่อมต่อ OBS...',false);try{await loadObsLib();const ObsClass=window.OBSWebSocket.default||window.OBSWebSocket;obs=new ObsClass();await obs.connect('ws://127.0.0.1:'+($('obsPort').value||'4455'),$('obsPass').value||undefined);obsReady=true;setObsStatus('เชื่อมต่อ OBS สำเร็จ',true);toast('เชื่อมต่อ OBS แล้ว')}catch(err){obsReady=false;setObsStatus('เชื่อมต่อ OBS ไม่สำเร็จ: '+(err.message||'ตรวจสอบ WebSocket'),false)}}
-async function addObsSource(mode,url,gid){if(!obsReady)await connectObs();if(!obsReady)return;try{const scene=await obs.call('GetCurrentProgramScene');const inputName='PepsLive Sponsor Dock - '+modeLabel(mode)+' - '+groupName(gid);const inputSettings={url,width:1920,height:1080,css:'body{background-color:rgba(0,0,0,0);margin:0;overflow:hidden}',shutdown:false,restart_when_active:false};try{await obs.call('GetInputSettings',{inputName});await obs.call('SetInputSettings',{inputName,inputSettings,overlay:true})}catch{await obs.call('CreateInput',{sceneName:scene.currentProgramSceneName,inputName,inputKind:'browser_source',inputSettings,sceneItemEnabled:true})}toast('เพิ่ม Source เข้า OBS แล้ว')}catch(err){setObsStatus('เพิ่ม Source ไม่สำเร็จ: '+(err.message||'ตรวจสอบ Scene'),false)}}
-function cssVars(){const r=document.documentElement.style;r.setProperty('--gap',state.gap+'px');r.setProperty('--radius',state.radius+'px');r.setProperty('--shadow',state.shadow);r.setProperty('--size',state.size+'px');r.setProperty('--pulseSpeed',state.pulseSpeed+'ms');r.setProperty('--spinSpeed',state.spinSpeed+'ms');r.setProperty('--wiggleSpeed',state.wiggleSpeed+'ms');r.setProperty('--floatSpeed',state.floatSpeed+'ms');r.setProperty('--swingSpeed',state.swingSpeed+'ms');r.setProperty('--waveSpeed',state.waveSpeed+'ms');r.setProperty('--waveHeight',state.waveHeight+'px');r.setProperty('--orbitSpeed',state.orbitSpeed+'ms')}
-function resolveGroupId(mode){if(urlGroup&&state.groups.find(g=>g.id===urlGroup))return urlGroup;return state.modeGroups[mode]||state.activeGroupId}
-function displayImages(mode){const gid=resolveGroupId(mode),g=state.groups.find(x=>x.id===gid);const ids=g?(g.imageIds||[]):[];const byId=new Map(state.images.map(x=>[x.id,x]));return ids.map(id=>byId.get(id)).filter(Boolean)}
-async function logo(img,extra=''){const url=await getImageUrl(img.id);return`<img class="logo" src="${url}" style="width:${state.size}px;max-height:${state.size}px;--radius:${state.radius}px;--shadow:${state.shadow};${extra}">`}
-async function renderDisplay(){clearTimers();cssVars();const root=$('display');if(!root)return;const mode=MODES.some(([m])=>m===urlMode)?urlMode:(urlMode==='auto'?state.mode:state.mode);const imgs=displayImages(mode);if(!imgs.length){root.innerHTML='';return}if(mode==='grid')return drawGrid(root,imgs);if(mode==='rotator')return drawRotator(root,imgs);if(mode==='ticker')return drawTicker(root,imgs);if(mode==='bounce')return drawBounce(root,imgs);if(mode==='rain')return drawRain(root,imgs);if(mode==='cover3d')return drawCover(root,imgs);if(['pulse','spin','wiggle','float','swing'].includes(mode))return drawAnim(root,imgs,mode);if(mode==='wave')return drawWave(root,imgs);if(mode==='orbit')return drawOrbit(root,imgs);if(mode==='spotlight')return drawSpotlight(root,imgs);return drawGrid(root,imgs)}
-async function drawGrid(root,imgs){root.innerHTML=`<div class="grid-mode">${(await Promise.all(imgs.map(i=>logo(i)))).join('')}</div>`}
-async function drawTicker(root,imgs){root.innerHTML=`<div class="ticker-mode" style="top:${state.tickerY}px"><div class="ticker-track" style="animation-duration:${state.tickerSpeed}s">${(await Promise.all([...imgs,...imgs,...imgs].map(i=>logo(i)))).join('')}</div></div>`}
-async function drawRotator(root,imgs){root.innerHTML=`<div class="rotator-mode eff-${state.effect}"><div class="rotator-inner">${(await Promise.all(imgs.map(i=>logo(i)))).join('')}</div></div>`;const cont=root.querySelector('.rotator-mode');cont.style.justifyContent=state.rotatorX==='left'?'flex-start':state.rotatorX==='right'?'flex-end':'center';cont.style.alignItems=state.rotatorY==='top'?'flex-start':state.rotatorY==='bottom'?'flex-end':'center';cont.style.padding=state.margin+'px';const list=[...root.querySelectorAll('img')];const show=()=>{list.forEach((im,idx)=>im.classList.toggle('active',idx===rotIndex%list.length));rotIndex++;timers.push(setTimeout(show,state.stayTime*1000))};show()}
-async function drawBounce(root,imgs){root.innerHTML=`<div class="bounce-mode">${(await Promise.all(imgs.map(i=>logo(i)))).join('')}</div>`;const items=[...root.querySelectorAll('img')].map((el,idx)=>({el,x:30+idx*95,y:30+idx*60,dx:state.bounceSpeed+(idx%3),dy:state.bounceSpeed+(idx%2)}));bounceStop=false;const step=()=>{if(bounceStop)return;const w=innerWidth,h=innerHeight;items.forEach(o=>{const r=o.el.getBoundingClientRect();o.x+=o.dx;o.y+=o.dy;if(o.x<0||o.x+r.width>w)o.dx*=-1;if(o.y<0||o.y+r.height>h)o.dy*=-1;o.el.style.transform=`translate(${o.x}px,${o.y}px)`});requestAnimationFrame(step)};step()}
-async function drawRain(root,imgs){root.innerHTML='<div class="rain-mode"></div>';const wrap=root.firstChild;const spawn=async()=>{for(let k=0;k<state.rainDensity;k++){const img=imgs[Math.floor(Math.random()*imgs.length)],div=document.createElement('div');div.className='rain-drop';div.style.left=(Math.random()*94)+'vw';div.style.setProperty('--fall',Math.max(1.8,18/state.rainSpeed)+'s');div.style.setProperty('--drift',(Math.random()*160-80)+'px');div.innerHTML=await logo(img);wrap.appendChild(div);setTimeout(()=>div.remove(),Math.max(2200,(18/state.rainSpeed)*1000+900))}};spawn();timers.push(setInterval(spawn,700))}
-async function drawCover(root,imgs){root.innerHTML=`<div class="cover-mode">${(await Promise.all(imgs.map(async i=>`<div class="cover-card">${await logo(i)}</div>`))).join('')}</div>`;let idx=0;const cards=[...root.querySelectorAll('.cover-card')];const step=()=>{const n=cards.length;cards.forEach((card,i)=>{let off=(i-idx+n)%n;if(off>n/2)off-=n;const a=Math.abs(off);card.style.transform=`translateX(${off*160}px) translateZ(${-a*110}px) rotateY(${off*-35}deg)`;card.style.opacity=a===0?1:state.coverOpacity;card.style.zIndex=100-a});idx=state.coverDir==='left'?(idx-1+n)%n:(idx+1)%n};step();timers.push(setInterval(step,state.coverSpeed))}
-async function drawAnim(root,imgs,mode){root.innerHTML=`<div class="anim-mode ${mode}">${(await Promise.all(imgs.map(i=>logo(i)))).join('')}</div>`}
-async function drawWave(root,imgs){root.innerHTML=`<div class="wave-mode">${(await Promise.all(imgs.map((i,idx)=>logo(i,`--delay:${idx*120}ms`)))).join('')}</div>`}
-async function drawOrbit(root,imgs){const n=imgs.length,parts=[];for(let idx=0;idx<n;idx++){const angle=(360/n)*idx;parts.push(`<div class="orbit-item" style="transform:rotate(${angle}deg) translateX(${state.orbitRadius}px) rotate(${-angle}deg)">${await logo(imgs[idx])}</div>`)}root.innerHTML=`<div class="orbit-mode"><div class="orbit-ring ${state.orbitDir==='left'?'left':''}">${parts.join('')}</div></div>`}
-async function drawSpotlight(root,imgs){const i=((rotIndex%imgs.length)+imgs.length)%imgs.length,active=imgs[i],strip=[];for(let idx=0;idx<imgs.length;idx++){const url=await getImageUrl(imgs[idx].id);strip.push(`<img src="${url}" class="${idx===i?'active':''}" style="--dim:${state.spotlightDim}">`)}root.innerHTML=`<div class="spotlight-mode"><div class="spot-main">${await logo(active)}</div><div class="spot-strip" style="--dim:${state.spotlightDim}">${strip.join('')}</div></div>`;rotIndex++;timers.push(setTimeout(()=>drawSpotlight(root,imgs),state.spotlightSpeed))}
-document.addEventListener('DOMContentLoaded',async()=>{injectCss();renderShell();subscribe();if(isControl){bindControl();renderControls();renderGroupUI()}else await renderDisplay()});
+`;
+    const st = document.createElement('style');
+    st.id = 'peps-sponsor-v3-css';
+    st.textContent = css;
+    document.head.appendChild(st);
+  }
+
+  function renderShell() {
+    document.body.className = isControl ? 'control' : 'display';
+    const app = document.getElementById('app') || document.body.appendChild(document.createElement('div'));
+    app.id = 'app';
+    if (!isControl) {
+      app.innerHTML = '<div id="display"></div>';
+      return;
+    }
+    app.innerHTML = `<div class="wrap"><div class="header"><div class="brand"><img src="https://pepsproduction.github.io/pepslive-tools/assets/pepslive-logo.png" alt="PepsLive"><div><h1>PepsLive Sponsor Dock</h1><span>ระบบจัดการสปอนเซอร์สำหรับ OBS</span></div></div><div class="badge">กลุ่มโลโก้</div></div><div class="section"><h2>กลุ่มโลโก้</h2><label>กลุ่มที่กำลังจัดการ</label><select id="groupSelect"></select><div class="row"><button id="addGroup" class="btn primary">เพิ่มกลุ่ม</button><button id="renameGroup" class="btn outline">เปลี่ยนชื่อ</button><button id="deleteGroup" class="btn danger">ลบกลุ่ม</button></div><div class="row"><button id="footballPreset" class="btn success">สร้างกลุ่มมาตรฐานงานกีฬา</button></div><p class="hint">แนะนำ: Main Sponsor ใช้กับ 3D / Partner ใช้กับ Ticker หรือ Float / Goal Sponsor ใช้กับ Spotlight</p></div><div class="section"><h2>จัดการรูปภาพในกลุ่มนี้</h2><div id="drop" class="drop"><div><div class="folder">📂</div><div>ลากรูปโลโก้มาวางในกลุ่มนี้</div><div id="count" class="count">0 รูปในกลุ่มนี้</div></div></div><input id="file" type="file" accept="image/*" multiple hidden><div id="thumbs" class="thumbs"></div><button id="reset" class="btn danger">ล้างรูปทั้งหมดและรีเซ็ต</button></div><div class="section"><h2>โหมดแสดงผล</h2><select id="mode">${MODES.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></div><div class="section"><h2>ตั้งค่า</h2><div id="controls"></div></div><div class="section"><h2>ผูกโหมดกับกลุ่มโลโก้</h2><div id="modeGroupMap"></div><p class="hint">URL ของแต่ละโหมดจะดึงกลุ่มที่ผูกไว้โดยอัตโนมัติ หรือใช้ URL แบบ &group= เพื่อบังคับเลือกกลุ่มเฉพาะ Source ได้</p></div><div class="section"><button id="sync" class="btn success">บังคับซิงก์หน้าจอ</button></div><div class="menu"><button id="help" class="btn outline">วิธีใช้งาน</button><button id="support" class="btn outline">สนับสนุน</button></div></div><div id="helpModal" class="modal"><div class="modal-box"><button class="close" data-close="helpModal">×</button><h2>วิธีใช้งานและสร้าง URL</h2><p class="hint">สร้าง Browser Source ขนาด 1920x1080 ใน OBS แล้วคัดลอก URL ด้านล่าง หรือกดเพิ่มเข้า OBS ผ่าน WebSocket</p><div id="urls"></div><hr><label>พอร์ต OBS WebSocket</label><div class="row"><input id="obsPort" type="text" value="4455"><input id="obsPass" type="password" placeholder="รหัสผ่าน ถ้ามี"></div><button id="connectObs" class="btn primary">เชื่อมต่อ OBS</button><div id="obsStatus" class="status bad">ยังไม่ได้เชื่อมต่อ OBS WebSocket</div></div></div><div id="supportModal" class="modal"><div class="modal-box"><button class="close" data-close="supportModal">×</button><h2>สนับสนุน</h2><p>PepsLive Sponsor Dock สำหรับงานไลฟ์กีฬาและ OBS</p><a class="btn primary" href="https://heylink.me/pepslive/" target="_blank">เปิดหน้าสนับสนุน</a></div></div><div id="toast">คัดลอกแล้ว</div>`;
+  }
+
+  const commonControls = [
+    ['size', 'ขนาดรูป', 'range', 50, 800, 1, 'px'],
+    ['radius', 'มุมโค้ง', 'range', 0, 50, 1, ''],
+    ['shadow', 'เงา', 'range', 0, 1, .1, '']
+  ];
+
+  const modeControls = {
+    grid: [
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]],
+      ['gridSpeed', 'ความเร็ว', 'range', 100, 5000, 100, ' ms']
+    ],
+    rotator: [
+      ['rotatorX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['rotatorY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]],
+      ['margin', 'ระยะจากขอบ', 'range', 0, 220, 1, 'px'],
+      ['stayTime', 'เวลาค้างต่อภาพ', 'range', .5, 10, .5, ' วิ'],
+      ['effect', 'เอฟเฟกต์เปลี่ยนภาพ', 'select', [['fade', 'เฟดเข้าออก'], ['slide', 'เลื่อนขึ้น'], ['zoom', 'ซูมเข้า'], ['flip', 'พลิก 3D'], ['drop', 'เด้งลง'], ['spin-in', 'หมุนเข้า'], ['blur', 'เบลอแล้วชัด']]]
+    ],
+    ticker: [
+      ['tickerSpeed', 'ความเร็ว', 'range', 5, 200, 1, ''],
+      ['gap', 'ระยะห่าง', 'range', 0, 200, 1, 'px'],
+      ['tickerY', 'ตำแหน่งแนวตั้ง', 'range', 0, 1000, 1, 'px'],
+      ['tickerX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]]
+    ],
+    bounce: [
+      ['bounceSpeed', 'ความเร็ว', 'range', 1, 20, 1, ''],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    rain: [
+      ['rainSpeed', 'ความเร็วตอนตก', 'range', 1, 20, 1, ''],
+      ['rainDensity', 'ความหนาแน่น', 'range', 1, 12, 1, ''],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    cover3d: [
+      ['coverSpeed', 'ความเร็วหมุน', 'range', 500, 5000, 100, ' ms'],
+      ['coverOpacity', 'ความชัดของโลโก้ด้านหลัง', 'range', .05, 1, .05, '%'],
+      ['coverDir', 'ทิศทางหมุน', 'select', [['right', 'หมุนไปทางขวา'], ['left', 'หมุนไปทางซ้าย']]],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    pulse: [
+      ['pulseSpeed', 'ความเร็วกระเพื่อม', 'range', 200, 3000, 100, ' ms'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    spin: [
+      ['spinSpeed', 'ความเร็วหมุน', 'range', 500, 5000, 100, ' ms'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    wiggle: [
+      ['wiggleSpeed', 'ความเร็วสั่น', 'range', 100, 2000, 100, ' ms'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    float: [
+      ['floatSpeed', 'ความเร็วลอย', 'range', 500, 4000, 100, ' ms'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    swing: [
+      ['swingSpeed', 'ความเร็วแกว่ง', 'range', 500, 4000, 100, ' ms'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    wave: [
+      ['waveSpeed', 'ความเร็วคลื่น', 'range', 500, 5000, 100, ' ms'],
+      ['waveHeight', 'ความสูงของคลื่น', 'range', 4, 90, 1, 'px'],
+      ['gap', 'ระยะห่าง', 'range', 0, 140, 1, 'px'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    orbit: [
+      ['orbitSpeed', 'ความเร็วโคจร', 'range', 1200, 16000, 100, ' ms'],
+      ['orbitRadius', 'รัศมีวงโคจร', 'range', 80, 520, 1, 'px'],
+      ['orbitDir', 'ทิศทางหมุน', 'select', [['right', 'หมุนไปทางขวา'], ['left', 'หมุนไปทางซ้าย']]],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ],
+    spotlight: [
+      ['spotlightSpeed', 'เวลาสลับโลโก้', 'range', 700, 8000, 100, ' ms'],
+      ['spotlightDim', 'ความจางของโลโก้ที่ไม่ได้เลือก', 'range', .05, 1, .05, '%'],
+      ['posX', 'ตำแหน่งแนวนอน', 'select', [['left', 'ซ้าย'], ['center', 'กลาง'], ['right', 'ขวา']]],
+      ['posY', 'ตำแหน่งแนวตั้ง', 'select', [['top', 'บน'], ['center', 'กลาง'], ['bottom', 'ล่าง']]]
+    ]
+  };
+
+  function renderControls() {
+    const box = $('controls');
+    if (!box) return;
+    const controls = [...commonControls, ...(modeControls[state.mode] || [])];
+    box.innerHTML = controls.map(renderControl).join('');
+    controls.forEach(([key]) => {
+      const el = $('ctl_' + key);
+      if (!el) return;
+      el.value = getSetting(state.mode, key);
+      el.addEventListener('input', () => {
+        setSetting(state.mode, key, el.type === 'range' ? Number(el.value) : el.value);
+        updateReadouts();
+        saveState();
+      });
+      el.addEventListener('change', () => {
+        setSetting(state.mode, key, el.type === 'range' ? Number(el.value) : el.value);
+        updateReadouts();
+        saveState();
+      });
+    });
+    updateReadouts();
+  }
+
+  function renderControl(c) {
+    const [key, label, type] = c;
+    if (type === 'select') {
+      return `<label>${label}</label><select id="ctl_${key}">${c[3].map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    }
+    const [,,, min, max, step] = c;
+    return `<label>${label} <span id="ro_${key}" class="readout"></span></label><input type="range" id="ctl_${key}" min="${min}" max="${max}" step="${step}">`;
+  }
+
+  function updateReadouts() {
+    [...commonControls, ...(modeControls[state.mode] || [])].forEach(c => {
+      const [key,, type,,,, suffix] = c;
+      const ro = $('ro_' + key);
+      if (!ro || type !== 'range') return;
+      const val = getSetting(state.mode, key);
+      if (key === 'coverOpacity' || key === 'spotlightDim') {
+        ro.textContent = Math.round(val * 100) + '%';
+      } else {
+        ro.textContent = val + (suffix || '');
+      }
+    });
+  }
+
+  function renderGroupUI() {
+    const sel = $('groupSelect');
+    if (!sel) return;
+    sel.innerHTML = groupOptions(state.activeGroupId);
+    renderModeGroupMap();
+    renderThumbs();
+  }
+
+  function renderModeGroupMap() {
+    const box = $('modeGroupMap');
+    if (!box) return;
+    box.innerHTML = MODES.map(([mode, label]) => `<div class="map-row"><b>${label}</b><select data-mode-group="${mode}">${groupOptions(state.modeGroups[mode] || state.activeGroupId)}</select></div>`).join('');
+    box.querySelectorAll('[data-mode-group]').forEach(sel => {
+      sel.onchange = () => {
+        state.modeGroups[sel.dataset.modeGroup] = sel.value;
+        saveState();
+        toast('บันทึกกลุ่มของโหมดแล้ว');
+      };
+    });
+  }
+
+  function ensureGroup(id, name) {
+    let g = state.groups.find(x => x.id === id);
+    if (!g) {
+      g = { id, name, imageIds: [] };
+      state.groups.push(g);
+    }
+    return g;
+  }
+
+  function createFootballPreset() {
+    const main = ensureGroup('main', 'Main Sponsor');
+    const partner = ensureGroup('partner', 'Partner Sponsor');
+    const goal = ensureGroup('goal', 'Goal Sponsor');
+    const half = ensureGroup('halftime', 'Half-time Sponsor');
+    state.modeGroups.cover3d = main.id;
+    state.modeGroups.spotlight = goal.id;
+    state.modeGroups.ticker = partner.id;
+    state.modeGroups.float = partner.id;
+    state.modeGroups.wave = partner.id;
+    state.modeGroups.orbit = half.id;
+    state.modeGroups.grid = half.id;
+    state.activeGroupId = main.id;
+    saveState();
+    renderGroupUI();
+    toast('สร้างกลุ่มมาตรฐานงานกีฬาแล้ว');
+  }
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) {
+          req.result.createObjectStore(STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function putImage(id, file) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put({ id, blob: file, name: file.name, type: file.type });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function getImageUrl(id) {
+    if (urls.has(id)) return urls.get(id);
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(id);
+      req.onsuccess = () => {
+        if (!req.result) return resolve('');
+        const url = URL.createObjectURL(req.result.blob);
+        urls.set(id, url);
+        resolve(url);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function deleteImage(id) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(id);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function clearImages() {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).clear();
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function addFiles(files) {
+    let count = 0;
+    const g = activeGroup();
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      const id = uid('img');
+      await putImage(id, file);
+      state.images.push({ id, name: file.name });
+      g.imageIds.push(id);
+      count++;
+    }
+    saveState();
+    await renderThumbs();
+    toast('เพิ่มรูปเข้า ' + g.name + ' แล้ว ' + count + ' รูป');
+  }
+
+  async function renderThumbs() {
+    const box = $('thumbs');
+    if (!box) return;
+    const g = activeGroup();
+    $('count').textContent = (g.imageIds || []).length + ' รูปในกลุ่ม ' + g.name;
+    box.innerHTML = '';
+    for (const id of (g.imageIds || [])) {
+      const url = await getImageUrl(id);
+      const item = document.createElement('div');
+      item.className = 'thumb';
+      item.innerHTML = `<img src="${url}" alt=""><button class="x" title="เอาออกจากกลุ่ม">×</button><button class="btn danger del">ลบถาวร</button>`;
+      item.querySelector('.x').onclick = e => {
+        e.stopPropagation();
+        g.imageIds = g.imageIds.filter(x => x !== id);
+        saveState();
+        renderThumbs();
+      };
+      item.querySelector('.del').onclick = async e => {
+        e.stopPropagation();
+        if (!confirm('ลบรูปนี้ออกจากทุกกลุ่มถาวร?')) return;
+        state.groups.forEach(gr => gr.imageIds = gr.imageIds.filter(x => x !== id));
+        state.images = state.images.filter(x => x.id !== id);
+        await deleteImage(id);
+        saveState();
+        renderThumbs();
+      };
+      box.appendChild(item);
+    }
+  }
+
+  function bindControl() {
+    $('mode').value = state.mode;
+    $('mode').onchange = () => {
+      state.mode = $('mode').value;
+      saveState();
+      renderControls();
+    };
+    $('groupSelect').onchange = () => {
+      state.activeGroupId = $('groupSelect').value;
+      saveState();
+      renderGroupUI();
+    };
+    $('addGroup').onclick = () => {
+      const name = prompt('ชื่อกลุ่มโลโก้ใหม่', 'กลุ่มใหม่');
+      if (!name) return;
+      const id = uid('group');
+      state.groups.push({ id, name, imageIds: [] });
+      state.activeGroupId = id;
+      MODE_IDS.forEach(m => {
+        if (!state.modeGroups[m]) state.modeGroups[m] = id;
+      });
+      saveState();
+      renderGroupUI();
+      toast('เพิ่มกลุ่มแล้ว');
+    };
+    $('renameGroup').onclick = () => {
+      const g = activeGroup();
+      const name = prompt('เปลี่ยนชื่อกลุ่ม', g.name);
+      if (!name) return;
+      g.name = name;
+      saveState();
+      renderGroupUI();
+      toast('เปลี่ยนชื่อกลุ่มแล้ว');
+    };
+    $('deleteGroup').onclick = () => {
+      if (state.groups.length <= 1) {
+        toast('ต้องมีอย่างน้อย 1 กลุ่ม');
+        return;
+      }
+      const g = activeGroup();
+      if (!confirm('ลบกลุ่ม ' + g.name + ' ? รูปจริงจะยังไม่ถูกลบถาวร')) return;
+      state.groups = state.groups.filter(x => x.id !== g.id);
+      state.activeGroupId = state.groups[0].id;
+      Object.keys(state.modeGroups).forEach(m => {
+        if (state.modeGroups[m] === g.id) state.modeGroups[m] = state.activeGroupId;
+      });
+      saveState();
+      renderGroupUI();
+      toast('ลบกลุ่มแล้ว');
+    };
+    $('footballPreset').onclick = createFootballPreset;
+    const drop = $('drop'), file = $('file');
+    drop.onclick = () => file.click();
+    file.onchange = e => addFiles([...e.target.files]);
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.add('drag');
+    }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+    }));
+    drop.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+    $('reset').onclick = async () => {
+      if (!confirm('ล้างรูปทั้งหมดและรีเซ็ตค่าตั้งค่า?')) return;
+      await clearImages();
+      state = normalize({ ...baseState });
+      saveState();
+      renderControls();
+      renderGroupUI();
+      toast('ล้างข้อมูลแล้ว');
+    };
+    $('sync').onclick = () => {
+      saveState();
+      toast('ซิงก์หน้าจอแล้ว');
+    };
+    $('help').onclick = () => {
+      buildUrlList();
+      $('helpModal').classList.add('open');
+    };
+    $('support').onclick = () => $('supportModal').classList.add('open');
+    document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('open'));
+    document.querySelectorAll('.modal').forEach(m => m.onclick = e => {
+      if (e.target === m) m.classList.remove('open');
+    });
+    $('connectObs').onclick = connectObs;
+  }
+
+  function buildUrlList() {
+    const box = $('urls');
+    box.innerHTML = '';
+    [...MODES, ['auto', MODE_LABEL.auto]].forEach(([mode, label]) => {
+      const gid = mode === 'auto' ? state.activeGroupId : (state.modeGroups[mode] || state.activeGroupId);
+      const url = pageUrl(mode, gid);
+      const item = document.createElement('div');
+      item.className = 'url-item';
+      item.innerHTML = `<b>${label}</b><div class="hint">กลุ่ม: ${esc(groupName(gid))}</div><div class="url-grid"><input class="url-code" value="${url}" readonly><button class="btn primary" style="margin:0">คัดลอก</button><button class="btn success" style="margin:0">เพิ่ม OBS</button></div>`;
+      const buttons = item.querySelectorAll('button');
+      buttons[0].onclick = () => {
+        navigator.clipboard.writeText(url);
+        toast('คัดลอก URL แล้ว');
+      };
+      buttons[1].onclick = () => addObsSource(mode, url, gid);
+      box.appendChild(item);
+    });
+  }
+
+  function pageUrl(mode, gid) {
+    const u = new URL(location.href);
+    u.search = '';
+    u.searchParams.set('mode', mode);
+    if (gid) u.searchParams.set('group', gid);
+    return u.href;
+  }
+
+  function loadObsLib() {
+    return new Promise((resolve, reject) => {
+      if (window.OBSWebSocket) return resolve();
+      const s = document.createElement('script');
+      s.src = OBS_LIB;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('โหลด OBS WebSocket library ไม่สำเร็จ'));
+      document.head.appendChild(s);
+    });
+  }
+
+  function setObsStatus(text, good) {
+    const st = $('obsStatus');
+    st.className = 'status ' + (good ? 'good' : 'bad');
+    st.textContent = text;
+  }
+
+  async function connectObs() {
+    setObsStatus('กำลังเชื่อมต่อ OBS...', false);
+    try {
+      await loadObsLib();
+      const ObsClass = window.OBSWebSocket.default || window.OBSWebSocket;
+      obs = new ObsClass();
+      await obs.connect('ws://127.0.0.1:' + ($('obsPort').value || '4455'), $('obsPass').value || undefined);
+      obsReady = true;
+      setObsStatus('เชื่อมต่อ OBS สำเร็จ', true);
+      toast('เชื่อมต่อ OBS แล้ว');
+    } catch (err) {
+      obsReady = false;
+      setObsStatus('เชื่อมต่อ OBS ไม่สำเร็จ: ' + (err.message || 'ตรวจสอบ WebSocket'), false);
+    }
+  }
+
+  async function addObsSource(mode, url, gid) {
+    if (!obsReady) await connectObs();
+    if (!obsReady) return;
+    try {
+      const scene = await obs.call('GetCurrentProgramScene');
+      const inputName = 'PepsLive Sponsor Dock - ' + modeLabel(mode) + ' - ' + groupName(gid);
+      const inputSettings = {
+        url,
+        width: 1920,
+        height: 1080,
+        css: 'body{background-color:rgba(0,0,0,0);margin:0;overflow:hidden}',
+        shutdown: false,
+        restart_when_active: false
+      };
+      try {
+        await obs.call('GetInputSettings', { inputName });
+        await obs.call('SetInputSettings', { inputName, inputSettings, overlay: true });
+      } catch {
+        await obs.call('CreateInput', {
+          sceneName: scene.currentProgramSceneName,
+          inputName,
+          inputKind: 'browser_source',
+          inputSettings,
+          sceneItemEnabled: true
+        });
+      }
+      toast('เพิ่ม Source เข้า OBS แล้ว');
+    } catch (err) {
+      setObsStatus('เพิ่ม Source ไม่สำเร็จ: ' + (err.message || 'ตรวจสอบ Scene'), false);
+    }
+  }
+
+  function cssVars(mode) {
+    const r = document.documentElement.style;
+    r.setProperty('--gap', getSetting(mode, 'gap') + 'px');
+    r.setProperty('--radius', getSetting(mode, 'radius') + 'px');
+    r.setProperty('--shadow', getSetting(mode, 'shadow'));
+    r.setProperty('--size', getSetting(mode, 'size') + 'px');
+    r.setProperty('--pulseSpeed', getSetting(mode, 'pulseSpeed') + 'ms');
+    r.setProperty('--spinSpeed', getSetting(mode, 'spinSpeed') + 'ms');
+    r.setProperty('--wiggleSpeed', getSetting(mode, 'wiggleSpeed') + 'ms');
+    r.setProperty('--floatSpeed', getSetting(mode, 'floatSpeed') + 'ms');
+    r.setProperty('--swingSpeed', getSetting(mode, 'swingSpeed') + 'ms');
+    r.setProperty('--waveSpeed', getSetting(mode, 'waveSpeed') + 'ms');
+    r.setProperty('--waveHeight', getSetting(mode, 'waveHeight') + 'px');
+    r.setProperty('--orbitSpeed', getSetting(mode, 'orbitSpeed') + 'ms');
+  }
+
+  function resolveGroupId(mode) {
+    if (urlGroup && state.groups.find(g => g.id === urlGroup)) return urlGroup;
+    return state.modeGroups[mode] || state.activeGroupId;
+  }
+
+  function displayImages(mode) {
+    const gid = resolveGroupId(mode);
+    const g = state.groups.find(x => x.id === gid);
+    const ids = g ? (g.imageIds || []) : [];
+    const byId = new Map(state.images.map(x => [x.id, x]));
+    return ids.map(id => byId.get(id)).filter(Boolean);
+  }
+
+  async function logo(img, extra = '', mode) {
+    const url = await getImageUrl(img.id);
+    const size = getSetting(mode, 'size');
+    const radius = getSetting(mode, 'radius');
+    const shadow = getSetting(mode, 'shadow');
+    return `<img class="logo" src="${url}" style="width:${size}px;max-height:${size}px;--radius:${radius}px;--shadow:${shadow};${extra}">`;
+  }
+
+  async function renderDisplay() {
+    clearTimers();
+    const mode = MODES.some(([m]) => m === urlMode) ? urlMode : (urlMode === 'auto' ? state.mode : state.mode);
+    cssVars(mode);
+    const root = $('display');
+    if (!root) return;
+    const imgs = displayImages(mode);
+    if (!imgs.length) {
+      root.innerHTML = '';
+      return;
+    }
+    if (mode === 'grid') return drawGrid(root, imgs, mode);
+    if (mode === 'rotator') return drawRotator(root, imgs, mode);
+    if (mode === 'ticker') return drawTicker(root, imgs, mode);
+    if (mode === 'bounce') return drawBounce(root, imgs, mode);
+    if (mode === 'rain') return drawRain(root, imgs, mode);
+    if (mode === 'cover3d') return drawCover(root, imgs, mode);
+    if (['pulse', 'spin', 'wiggle', 'float', 'swing'].includes(mode)) return drawAnim(root, imgs, mode);
+    if (mode === 'wave') return drawWave(root, imgs, mode);
+    if (mode === 'orbit') return drawOrbit(root, imgs, mode);
+    if (mode === 'spotlight') return drawSpotlight(root, imgs, mode);
+    return drawGrid(root, imgs, mode);
+  }
+
+  async function drawGrid(root, imgs, mode) {
+    const px = getSetting(mode, 'posX');
+    const py = getSetting(mode, 'posY');
+    const jc = px === 'left' ? 'flex-start' : px === 'right' ? 'flex-end' : 'center';
+    const ai = py === 'top' ? 'flex-start' : py === 'bottom' ? 'flex-end' : 'center';
+    const top = py === 'top' ? '0' : py === 'center' ? '0' : 'auto';
+    const bottom = py === 'bottom' ? '0' : py === 'center' ? '0' : 'auto';
+    const height = py === 'center' ? '100%' : 'auto';
+    const gridSpeed = getSetting(mode, 'gridSpeed');
+
+    const gridStyle = `display:flex; justify-content:${jc}; align-items:${ai}; padding:20px; position:absolute; left:0; right:0; top:${top}; bottom:${bottom}; height:${height}; gap:var(--gap); flex-wrap:wrap; transition: all ${gridSpeed}ms ease;`;
+
+    root.innerHTML = `<div class="grid-mode" style="${gridStyle}">${(await Promise.all(imgs.map(i => logo(i, '', mode)))).join('')}</div>`;
+  }
+
+  async function drawTicker(root, imgs, mode) {
+    const tickerY = getSetting(mode, 'tickerY');
+    const tickerX = getSetting(mode, 'tickerX');
+    const tickerSpeed = getSetting(mode, 'tickerSpeed');
+
+    let tickerStyle = `top:${tickerY}px;`;
+    if (tickerX === 'left') {
+      tickerStyle += `left:5%; right:auto; width:90%;`;
+    } else if (tickerX === 'right') {
+      tickerStyle += `left:auto; right:5%; width:90%;`;
+    } else {
+      tickerStyle += `left:0; width:100%;`;
+    }
+
+    root.innerHTML = `<div class="ticker-mode" style="${tickerStyle}"><div class="ticker-track" style="animation-duration:${tickerSpeed}s">${(await Promise.all([...imgs, ...imgs, ...imgs].map(i => logo(i, '', mode)))).join('')}</div></div>`;
+  }
+
+  async function drawRotator(root, imgs, mode) {
+    const rotatorX = getSetting(mode, 'rotatorX');
+    const rotatorY = getSetting(mode, 'rotatorY');
+    const margin = getSetting(mode, 'margin');
+    const effect = getSetting(mode, 'effect');
+    const stayTime = getSetting(mode, 'stayTime');
+
+    root.innerHTML = `<div class="rotator-mode eff-${effect}"><div class="rotator-inner">${(await Promise.all(imgs.map(i => logo(i, '', mode)))).join('')}</div></div>`;
+    const cont = root.querySelector('.rotator-mode');
+    cont.style.justifyContent = rotatorX === 'left' ? 'flex-start' : rotatorX === 'right' ? 'flex-end' : 'center';
+    cont.style.alignItems = rotatorY === 'top' ? 'flex-start' : rotatorY === 'bottom' ? 'flex-end' : 'center';
+    cont.style.padding = margin + 'px';
+    const list = [...root.querySelectorAll('img')];
+    const show = () => {
+      list.forEach((im, idx) => im.classList.toggle('active', idx === rotIndex % list.length));
+      rotIndex++;
+      timers.push(setTimeout(show, stayTime * 1000));
+    };
+    show();
+  }
+
+  async function drawBounce(root, imgs, mode) {
+    const bounceSpeed = getSetting(mode, 'bounceSpeed');
+    const posX = getSetting(mode, 'posX');
+    const posY = getSetting(mode, 'posY');
+
+    root.innerHTML = `<div class="bounce-mode">${(await Promise.all(imgs.map(i => logo(i, '', mode)))).join('')}</div>`;
+    const items = [...root.querySelectorAll('img')].map((el, idx) => ({
+      el,
+      x: 30 + idx * 95,
+      y: 30 + idx * 60,
+      dx: bounceSpeed + (idx % 3),
+      dy: bounceSpeed + (idx % 2)
+    }));
+    bounceStop = false;
+    const step = () => {
+      if (bounceStop) return;
+      const w = innerWidth, h = innerHeight;
+      let minX = 0, maxX = w;
+      let minY = 0, maxY = h;
+      if (posX === 'left') maxX = w * 0.5;
+      else if (posX === 'right') minX = w * 0.5;
+      if (posY === 'top') maxY = h * 0.5;
+      else if (posY === 'bottom') minY = h * 0.5;
+
+      items.forEach(o => {
+        const r = o.el.getBoundingClientRect();
+        o.x += o.dx;
+        o.y += o.dy;
+        if (o.x < minX || o.x + r.width > maxX) {
+          o.dx *= -1;
+          o.x = Math.max(minX, Math.min(o.x, maxX - r.width));
+        }
+        if (o.y < minY || o.y + r.height > maxY) {
+          o.dy *= -1;
+          o.y = Math.max(minY, Math.min(o.y, maxY - r.height));
+        }
+        o.el.style.transform = `translate(${o.x}px,${o.y}px)`;
+      });
+      requestAnimationFrame(step);
+    };
+    step();
+  }
+
+  async function drawRain(root, imgs, mode) {
+    const rainSpeed = getSetting(mode, 'rainSpeed');
+    const rainDensity = getSetting(mode, 'rainDensity');
+    const posX = getSetting(mode, 'posX');
+    const posY = getSetting(mode, 'posY');
+
+    let topOffset = '0', heightVal = '100vh';
+    if (posY === 'top') {
+      heightVal = '50vh';
+    } else if (posY === 'bottom') {
+      topOffset = '50vh';
+      heightVal = '50vh';
+    }
+
+    root.innerHTML = `<div class="rain-mode" style="top:${topOffset}; height:${heightVal};"></div>`;
+    const wrap = root.firstChild;
+    const spawn = async () => {
+      for (let k = 0; k < rainDensity; k++) {
+        const img = imgs[Math.floor(Math.random() * imgs.length)];
+        const div = document.createElement('div');
+        div.className = 'rain-drop';
+        let leftStart = 0, leftRange = 94;
+        if (posX === 'left') {
+          leftStart = 0;
+          leftRange = 40;
+        } else if (posX === 'right') {
+          leftStart = 54;
+          leftRange = 40;
+        } else if (posX === 'center') {
+          leftStart = 27;
+          leftRange = 40;
+        }
+        div.style.left = (leftStart + Math.random() * leftRange) + 'vw';
+        div.style.setProperty('--fall', Math.max(1.8, 18 / rainSpeed) + 's');
+        div.style.setProperty('--drift', (Math.random() * 160 - 80) + 'px');
+        div.innerHTML = await logo(img, '', mode);
+        wrap.appendChild(div);
+        setTimeout(() => div.remove(), Math.max(2200, (18 / rainSpeed) * 1000 + 900));
+      }
+    };
+    spawn();
+    timers.push(setInterval(spawn, 700));
+  }
+
+  async function drawCover(root, imgs, mode) {
+    const coverSpeed = getSetting(mode, 'coverSpeed');
+    const coverOpacity = getSetting(mode, 'coverOpacity');
+    const coverDir = getSetting(mode, 'coverDir');
+    const posX = getSetting(mode, 'posX');
+    const posY = getSetting(mode, 'posY');
+
+    const jc = posX === 'left' ? 'flex-start' : posX === 'right' ? 'flex-end' : 'center';
+    let posStyle = '';
+    if (posY === 'top') {
+      posStyle = 'top: 50px; bottom: auto;';
+    } else if (posY === 'center') {
+      posStyle = 'top: calc(50% - 165px); bottom: auto;';
+    } else {
+      posStyle = 'bottom: 50px; top: auto;';
+    }
+
+    root.innerHTML = `<div class="cover-mode" style="display:flex; justify-content:${jc}; ${posStyle}">${(await Promise.all(imgs.map(async i => `<div class="cover-card">${await logo(i, '', mode)}</div>`))).join('')}</div>`;
+    let idx = 0;
+    const cards = [...root.querySelectorAll('.cover-card')];
+    const step = () => {
+      const n = cards.length;
+      cards.forEach((card, i) => {
+        let off = (i - idx + n) % n;
+        if (off > n / 2) off -= n;
+        const a = Math.abs(off);
+        card.style.transform = `translateX(${off * 160}px) translateZ(${-a * 110}px) rotateY(${off * -35}deg)`;
+        card.style.opacity = a === 0 ? 1 : coverOpacity;
+        card.style.zIndex = 100 - a;
+      });
+      idx = coverDir === 'left' ? (idx - 1 + n) % n : (idx + 1) % n;
+    };
+    step();
+    timers.push(setInterval(step, coverSpeed));
+  }
+
+  async function drawAnim(root, imgs, mode) {
+    const px = getSetting(mode, 'posX');
+    const py = getSetting(mode, 'posY');
+    const jc = px === 'left' ? 'flex-start' : px === 'right' ? 'flex-end' : 'center';
+    const ai = py === 'top' ? 'flex-start' : py === 'bottom' ? 'flex-end' : 'center';
+    const top = py === 'top' ? '0' : py === 'center' ? '0' : 'auto';
+    const bottom = py === 'bottom' ? '0' : py === 'center' ? '0' : 'auto';
+    const height = py === 'center' ? '100%' : 'auto';
+
+    const animStyle = `display:flex; justify-content:${jc}; align-items:${ai}; padding:20px; position:absolute; left:0; right:0; top:${top}; bottom:${bottom}; height:${height}; gap:var(--gap); flex-wrap:wrap;`;
+
+    root.innerHTML = `<div class="anim-mode ${mode}" style="${animStyle}">${(await Promise.all(imgs.map(i => logo(i, '', mode)))).join('')}</div>`;
+  }
+
+  async function drawWave(root, imgs, mode) {
+    const px = getSetting(mode, 'posX');
+    const py = getSetting(mode, 'posY');
+    const jc = px === 'left' ? 'flex-start' : px === 'right' ? 'flex-end' : 'center';
+    const ai = py === 'top' ? 'flex-start' : py === 'bottom' ? 'flex-end' : 'center';
+    const top = py === 'top' ? '0' : py === 'center' ? '0' : 'auto';
+    const bottom = py === 'bottom' ? '0' : py === 'center' ? '0' : 'auto';
+    const height = py === 'center' ? '100%' : 'auto';
+
+    const waveStyle = `display:flex; justify-content:${jc}; align-items:${ai}; padding:20px; position:absolute; left:0; right:0; top:${top}; bottom:${bottom}; height:${height}; gap:var(--gap); flex-wrap:wrap;`;
+
+    root.innerHTML = `<div class="wave-mode" style="${waveStyle}">${(await Promise.all(imgs.map((i, idx) => logo(i, `--delay:${idx * 120}ms`, mode)))).join('')}</div>`;
+  }
+
+  async function drawOrbit(root, imgs, mode) {
+    const orbitSpeed = getSetting(mode, 'orbitSpeed');
+    const orbitRadius = getSetting(mode, 'orbitRadius');
+    const orbitDir = getSetting(mode, 'orbitDir');
+    const posX = getSetting(mode, 'posX');
+    const posY = getSetting(mode, 'posY');
+
+    const jc = posX === 'left' ? 'start' : posX === 'right' ? 'end' : 'center';
+    const ai = posY === 'top' ? 'start' : posY === 'bottom' ? 'end' : 'center';
+
+    const orbitStyle = `display:grid; place-content:${ai} ${jc}; padding:50px; position:absolute; inset:0;`;
+
+    const n = imgs.length, parts = [];
+    for (let idx = 0; idx < n; idx++) {
+      const angle = (360 / n) * idx;
+      parts.push(`<div class="orbit-item" style="transform:rotate(${angle}deg) translateX(${orbitRadius}px) rotate(${-angle}deg)">${await logo(imgs[idx], '', mode)}</div>`);
+    }
+    root.innerHTML = `<div class="orbit-mode" style="${orbitStyle}"><div class="orbit-ring ${orbitDir === 'left' ? 'left' : ''}" style="animation-duration:${orbitSpeed}ms">${parts.join('')}</div></div>`;
+  }
+
+  async function drawSpotlight(root, imgs, mode) {
+    const spotlightSpeed = getSetting(mode, 'spotlightSpeed');
+    const spotlightDim = getSetting(mode, 'spotlightDim');
+    const posX = getSetting(mode, 'posX');
+    const posY = getSetting(mode, 'posY');
+
+    const i = ((rotIndex % imgs.length) + imgs.length) % imgs.length, active = imgs[i], strip = [];
+    for (let idx = 0; idx < imgs.length; idx++) {
+      const url = await getImageUrl(imgs[idx].id);
+      strip.push(`<img src="${url}" class="${idx === i ? 'active' : ''}" style="--dim:${spotlightDim}">`);
+    }
+
+    const jc = posX === 'left' ? 'flex-start' : posX === 'right' ? 'flex-end' : 'center';
+    const ai = posY === 'top' ? 'flex-start' : posY === 'bottom' ? 'flex-end' : 'center';
+
+    const spotlightStyle = `display:flex; flex-direction:column; justify-content:${ai}; align-items:${jc}; padding:50px; position:absolute; inset:0;`;
+
+    root.innerHTML = `<div class="spotlight-mode" style="${spotlightStyle}"><div class="spot-main">${await logo(active, '', mode)}</div><div class="spot-strip" style="--dim:${spotlightDim}">${strip.join('')}</div></div>`;
+    rotIndex++;
+    timers.push(setTimeout(() => drawSpotlight(root, imgs, mode), spotlightSpeed));
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    injectCss();
+    renderShell();
+    subscribe();
+    if (isControl) {
+      bindControl();
+      renderControls();
+      renderGroupUI();
+    } else {
+      await renderDisplay();
+    }
+  });
 })();
