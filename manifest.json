@@ -1,17 +1,21 @@
 {
   "project": "PepsLive Sponsor Dock",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "files": [
     "CHANGELOG.md",
-    "GITHUB_UPLOAD_HELPER.bat",
     "README.md",
     "assets/sponsor-control.js",
     "assets/sponsor-display.js",
+    "assets/sponsor-mode-registry.js",
+    "assets/sponsor-modes.js",
     "assets/sponsor-shared.js",
     "assets/sponsor.css",
-    "data/sample-sponsors.json",
     "index.html",
+    "package.json",
+    "scripts/browser-smoke.js",
+    "scripts/check-project.js",
     "sponsor-control.html",
-    "sponsor-display.html"
+    "sponsor-display.html",
+    "sponsor.html"
   ]
 }

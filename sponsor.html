@@ -4,12 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PepsLive Sponsor Dock</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Prompt:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <script>
+    (() => {
+      const source = new URL(window.location.href);
+      const mode = source.searchParams.get("mode") || "auto";
+      const target = new URL(
+        mode === "control" ? "./sponsor-control.html" : "./sponsor-display.html",
+        source
+      );
+      for (const [key, value] of source.searchParams) {
+        if (key === "mode" && mode === "control") continue;
+        target.searchParams.set(key, value);
+      }
+      target.hash = source.hash;
+      window.location.replace(target.href);
+    })();
+  </script>
 </head>
 <body>
-  <div id="app"></div>
-  <script src="assets/peps-sponsor-v3.js?v=1"></script>
+  <p>กำลังเปิด PepsLive Sponsor Dock…</p>
 </body>
 </html>

@@ -2,10 +2,28 @@
 <html lang="th">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=./sponsor.html?mode=display">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>PepsLive Sponsor Display</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2310141c'/%3E%3Cpath d='M15 45 24 18h7l-9 27zm14 0 9-27h7l-9 27zm14 0 6-18h7l-6 18z' fill='%23ff7a18'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./assets/sponsor.css">
 </head>
-<body>
-  <p>Redirecting to <a href="./sponsor.html?mode=display">PepsLive Sponsor Display</a></p>
+<body class="display-page">
+  <main class="display-root" id="displayRoot">
+    <div class="display-stage" id="displayStage">
+      <div class="safe-area-guide" id="safeAreaGuide" aria-hidden="true"></div>
+      <div class="sponsor-layer" id="sponsorLayer"></div>
+      <section class="display-empty" id="emptyState" aria-labelledby="emptyStateTitle" aria-describedby="emptyStateText">
+        <span aria-hidden="true">PEPS</span>
+        <strong id="emptyStateTitle">ยังไม่มี Sponsor ใน Output นี้</strong>
+        <small id="emptyStateText">เพิ่ม Sponsor เข้า Group หรือ Playlist จากหน้า Control</small>
+      </section>
+    </div>
+  </main>
+
+  <script src="./assets/sponsor-mode-registry.js"></script>
+  <script src="./assets/sponsor-shared.js"></script>
+  <script src="./assets/sponsor-modes.js"></script>
+  <script src="./assets/sponsor-display.js"></script>
 </body>
 </html>
