@@ -2,10 +2,403 @@
 <html lang="th">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=./sponsor.html?mode=control">
-  <title>PepsLive Sponsor Control</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0e14">
+  <title>PepsLive Sponsor Dock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Prompt:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2310141c'/%3E%3Cpath d='M15 45 24 18h7l-9 27zm14 0 9-27h7l-9 27zm14 0 6-18h7l-6 18z' fill='%23ff7a18'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./assets/sponsor.css">
 </head>
-<body>
-  <p>Redirecting to <a href="./sponsor.html?mode=control">PepsLive Sponsor Control</a></p>
+<body class="control-page" data-active-view="live">
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="brand brand-button" id="brandHome" type="button" aria-label="กลับหน้า Live">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>
+          <small>PEPSLIVE OBS TOOL</small>
+          <strong>Sponsor Dock</strong>
+        </span>
+      </button>
+
+      <div class="header-status" aria-label="สถานะระบบ">
+        <span class="status-chip connected" id="saveStatus"><span class="status-dot"></span>พร้อมใช้งาน</span>
+        <span class="status-chip" id="obsStatus"><span class="status-dot"></span>OBS Offline</span>
+      </div>
+
+      <div class="header-actions">
+        <a class="btn secondary compact" id="openDisplayBtn" href="./sponsor.html?mode=live" target="_blank" rel="noopener">เปิด Display</a>
+        <button class="btn primary compact" id="copyAutoUrlBtn" type="button">คัดลอก URL</button>
+      </div>
+    </header>
+
+    <nav class="workspace-nav" role="tablist" aria-label="พื้นที่ทำงาน">
+      <button class="nav-item is-active" id="tab-live" type="button" role="tab" aria-selected="true" aria-controls="view-live" data-view="live">
+        <span class="nav-glyph" aria-hidden="true">●</span><span>Live</span>
+      </button>
+      <button class="nav-item" id="tab-sponsors" type="button" role="tab" aria-selected="false" aria-controls="view-sponsors" data-view="sponsors">
+        <span class="nav-glyph" aria-hidden="true">▦</span><span>Sponsors</span>
+        <span class="nav-count" id="navSponsorCount">0</span>
+      </button>
+      <button class="nav-item" id="tab-collections" type="button" role="tab" aria-selected="false" aria-controls="view-collections" data-view="collections">
+        <span class="nav-glyph" aria-hidden="true">≡</span><span>Collections</span>
+        <span class="nav-count" id="navGroupCount">0</span>
+      </button>
+      <button class="nav-item" id="tab-modes" type="button" role="tab" aria-selected="false" aria-controls="view-modes" data-view="modes">
+        <span class="nav-glyph" aria-hidden="true">◆</span><span>Modes</span>
+      </button>
+      <button class="nav-item" id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="view-settings" data-view="settings">
+        <span class="nav-glyph" aria-hidden="true">⚙</span><span>Settings</span>
+      </button>
+    </nav>
+
+    <div class="workspace-layout">
+      <main class="workspace-main">
+        <section class="workspace-view is-active" id="view-live" role="tabpanel" aria-labelledby="tab-live" data-view-panel="live">
+          <div class="section-intro">
+            <div>
+              <p class="eyebrow">OPERATOR MODE</p>
+              <h1>ควบคุม Sponsor ระหว่างไลฟ์</h1>
+              <p>เลือก Playlist แล้วสั่งขึ้นจอ เปลี่ยนลำดับ หรือเรียก Sponsor Break ได้จากจุดเดียว</p>
+            </div>
+            <span class="live-badge"><span></span> LIVE CONTROL</span>
+          </div>
+
+          <div class="status-strip" role="group" aria-label="สถานะโปรเจกต์">
+            <div><span>Project</span><strong id="projectStatus">PepsLive Sponsor Dock</strong></div>
+            <div><span>Sponsors</span><strong id="sponsorCount">0</strong></div>
+            <div><span>Playlist</span><strong id="playlistStatus">-</strong></div>
+            <div><span>Display</span><strong id="displayStatus">ON AIR</strong></div>
+          </div>
+
+          <section class="panel live-panel">
+            <div class="live-topline">
+              <label class="select-card" for="livePlaylist">
+                <span>Playlist ที่กำลังใช้</span>
+                <select id="livePlaylist"></select>
+              </label>
+              <button class="on-air-toggle is-on" id="cmdVisibility" type="button" aria-pressed="true" aria-label="แสดงหรือซ่อน Sponsor บนหน้าจอ">
+                <span class="broadcast-icon" aria-hidden="true"><i></i></span>
+                <span><small id="visibilityHint">แสดงอยู่บนหน้าจอ</small><strong id="visibilityLabel">ON AIR</strong></span>
+              </button>
+            </div>
+
+            <div class="now-playing">
+              <div class="now-thumb">
+                <img id="nowSponsorThumb" alt="">
+                <span id="nowFallback" aria-hidden="true">PEPS</span>
+              </div>
+              <div class="now-copy">
+                <span>กำลังแสดง</span>
+                <strong id="nowSponsorName">รอข้อมูลจาก Display</strong>
+                <small id="nowSponsorMeta">เปิด Preview หรือ Display เพื่อดูสถานะจริง</small>
+                <div class="progress-track" aria-hidden="true"><span id="nowProgress"></span></div>
+              </div>
+            </div>
+
+            <div class="transport" role="group" aria-label="ควบคุมลำดับ">
+              <button class="transport-btn" id="cmdPrev" type="button"><span aria-hidden="true">←</span><small>Previous</small></button>
+              <button class="transport-btn play" id="cmdPause" type="button" aria-pressed="false" aria-label="พักหรือเล่นต่อการหมุน Sponsor">
+                <span id="pauseIcon" aria-hidden="true">Ⅱ</span><small id="pauseLabel">Pause</small>
+              </button>
+              <button class="transport-btn" id="cmdNext" type="button"><span aria-hidden="true">→</span><small>Next</small></button>
+            </div>
+
+            <div class="trigger-grid">
+              <button class="trigger-card break" id="cmdBreak" type="button">
+                <span class="trigger-kicker">10 SEC</span><strong>Sponsor Break</strong><small>บอร์ดรวม Sponsor เต็มจอ</small>
+              </button>
+              <button class="trigger-card goal" id="cmdGoal" type="button">
+                <span class="trigger-kicker">5 SEC</span><strong>Goal Popup</strong><small>ป๊อปอัป Sponsor จังหวะสำคัญ</small>
+              </button>
+            </div>
+
+            <div class="effect-banner" id="effectBanner" hidden>
+              <span class="effect-pulse" aria-hidden="true"></span>
+              <div><strong id="effectLabel">Sponsor Break กำลังแสดง</strong><span>เหลือ <b id="effectCountdown">0</b> วินาที</span></div>
+              <button class="btn danger compact" id="cmdCancelEffect" type="button">หยุดทันที</button>
+            </div>
+
+            <div class="utility-row">
+              <button class="text-button" id="cmdReload" type="button">↻ Reload Display</button>
+              <span id="liveSourceHint">แนะนำให้ใช้ URL Live Display เป็น Browser Source หลักสำหรับหน้างาน</span>
+            </div>
+          </section>
+        </section>
+
+        <section class="workspace-view" id="view-sponsors" role="tabpanel" aria-labelledby="tab-sponsors" data-view-panel="sponsors" hidden>
+          <div class="section-intro">
+            <div>
+              <p class="eyebrow">SPONSOR LIBRARY</p>
+              <h1>คลังโลโก้กลาง</h1>
+              <p>อัปโหลดครั้งเดียว แล้วนำ Sponsor ไปใช้ซ้ำได้ทั้ง Group, Playlist และทุกโหมดแสดงผล</p>
+            </div>
+            <span class="library-stat"><strong id="libraryCount">0</strong> SPONSORS</span>
+          </div>
+
+          <section class="panel">
+            <label class="upload-zone" id="uploadZone" for="sponsorFiles">
+              <input id="sponsorFiles" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple>
+              <span class="upload-icon" aria-hidden="true">＋</span>
+              <span><strong>ลากโลโก้มาวาง หรือกดเลือกไฟล์</strong><small>PNG, JPG, WebP, SVG — ไม่เกิน 12 MB ต่อไฟล์</small></span>
+            </label>
+            <div class="upload-target-row">
+              <label for="uploadGroup"><span>เพิ่มเข้า Group</span><select id="uploadGroup"></select></label>
+              <label for="uploadPlaylist"><span>เพิ่มเข้า Playlist</span><select id="uploadPlaylist"></select></label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="library-tools">
+              <label class="search-field" for="sponsorSearch"><span class="sr-only">ค้นหา Sponsor</span><input id="sponsorSearch" type="search" placeholder="ค้นหาชื่อ Sponsor…"></label>
+              <label for="tierFilter"><span class="sr-only">กรองตาม Tier</span>
+                <select id="tierFilter">
+                  <option value="all">ทุก Tier</option><option value="main">Main Sponsor</option>
+                  <option value="gold">Gold Sponsor</option><option value="silver">Silver Sponsor</option><option value="partner">Partner</option>
+                </select>
+              </label>
+            </div>
+            <div class="sponsor-list" id="sponsorList"></div>
+          </section>
+        </section>
+
+        <section class="workspace-view" id="view-collections" role="tabpanel" aria-labelledby="tab-collections" data-view-panel="collections" hidden>
+          <div class="section-intro">
+            <div>
+              <p class="eyebrow">GROUPS + PLAYLISTS</p>
+              <h1>จัดชุด Sponsor ให้เป็นระบบ</h1>
+              <p>Group ใช้กับ URL แบบคงที่ ส่วน Playlist ใช้เป็นลำดับควบคุมในหน้า Live</p>
+            </div>
+          </div>
+
+          <section class="panel collection-panel">
+            <div class="panel-head">
+              <div><span class="panel-kicker">FIXED OUTPUT SETS</span><h2>Groups</h2><p>รักษาระบบ Group และการผูกแต่ละโหมดจาก GitHub v3</p></div>
+              <span class="count-pill"><b id="groupItemCount">0</b> ITEMS</span>
+            </div>
+            <div class="collection-editor">
+              <label for="groupSelect"><span>Group ที่กำลังจัดการ</span><select id="groupSelect"></select></label>
+              <label for="groupName"><span>ชื่อ Group</span><input id="groupName" type="text" maxlength="120"></label>
+              <div class="collection-actions">
+                <button class="btn secondary" id="addGroupBtn" type="button">＋ Group ใหม่</button>
+                <button class="btn primary" id="saveGroupBtn" type="button">บันทึกชื่อ</button>
+                <button class="btn danger" id="deleteGroupBtn" type="button">ลบ Group</button>
+              </div>
+              <button class="btn success-soft" id="footballPresetBtn" type="button">สร้าง Groups มาตรฐานงานกีฬา</button>
+            </div>
+            <div class="inline-add-row">
+              <label for="groupAddSponsor"><span>เพิ่ม Sponsor เข้า Group</span><select id="groupAddSponsor"></select></label>
+              <button class="btn secondary" id="groupAddSponsorBtn" type="button">เพิ่ม</button>
+            </div>
+            <div class="playlist-items" id="groupMembers"></div>
+          </section>
+
+          <section class="panel collection-panel">
+            <div class="panel-head">
+              <div><span class="panel-kicker">LIVE RUNDOWN</span><h2>Playlists</h2><p>จัดลำดับ Sponsor, รูปแบบแสดงผล และเวลาหมุนสำหรับหน้างาน</p></div>
+              <span class="count-pill"><b id="playlistItemCount">0</b> ITEMS</span>
+            </div>
+            <div class="playlist-form">
+              <label for="activePlaylist"><span>Playlist</span><select id="activePlaylist"></select></label>
+              <label for="playlistName"><span>ชื่อ Playlist</span><input id="playlistName" type="text" maxlength="120"></label>
+              <label for="playlistMode"><span>โหมดแสดงผล</span><select id="playlistMode"></select></label>
+              <label for="playlistGroup"><span>Group สำรอง</span><select id="playlistGroup"></select></label>
+              <label for="playlistDuration"><span>เวลาพื้นฐาน</span><input id="playlistDuration" type="number" min="2" max="60" step="1"></label>
+            </div>
+            <div class="mode-explainer">
+              <strong id="playlistModeHelp">เลือกโหมดเพื่อดูคำอธิบาย</strong><span id="playlistCapacity"></span>
+            </div>
+            <div class="collection-actions">
+              <button class="btn secondary" id="addPlaylistBtn" type="button">＋ Playlist ใหม่</button>
+              <button class="btn primary" id="savePlaylistBtn" type="button">บันทึก Playlist</button>
+              <button class="btn secondary" id="shufflePlaylistBtn" type="button">สุ่มลำดับ</button>
+              <button class="btn danger" id="deletePlaylistBtn" type="button">ลบ Playlist</button>
+            </div>
+            <div class="inline-add-row">
+              <label for="playlistAddSponsor"><span>เพิ่ม Sponsor เข้า Playlist</span><select id="playlistAddSponsor"></select></label>
+              <button class="btn secondary" id="playlistAddSponsorBtn" type="button">เพิ่ม</button>
+            </div>
+            <div class="playlist-items" id="playlistItems"></div>
+          </section>
+        </section>
+
+        <section class="workspace-view" id="view-modes" role="tabpanel" aria-labelledby="tab-modes" data-view-panel="modes" hidden>
+          <div class="section-intro">
+            <div>
+              <p class="eyebrow">MODE STUDIO</p>
+              <h1>21 โหมดแสดงผลในระบบเดียว</h1>
+              <p>คง 14 โหมดจาก GitHub v3 และเพิ่ม 7 โหมดสำหรับงาน Broadcast โดยแยกค่าของแต่ละโหมดอิสระ</p>
+            </div>
+            <label class="compact-filter" for="modeCategoryFilter"><span class="sr-only">กรองหมวดโหมด</span>
+              <select id="modeCategoryFilter">
+                <option value="all">ทุกหมวด</option><option value="classic">Classic</option>
+                <option value="motion">Motion</option><option value="playful">Playful</option>
+                <option value="showcase">Showcase</option><option value="broadcast">Broadcast</option>
+                <option value="event">Event</option>
+              </select>
+            </label>
+          </div>
+
+          <section class="panel">
+            <div class="mode-library" id="modeLibrary" role="group" aria-label="คลังโหมดแสดงผล"></div>
+          </section>
+
+          <section class="panel mode-studio">
+            <div class="panel-head">
+              <div><span class="panel-kicker">ACTIVE MODE</span><h2 id="modeStudioTitle">Grid</h2><p id="modeStudioDescription"></p></div>
+              <button class="btn secondary compact" id="syncModeBtn" type="button">บังคับ Sync</button>
+            </div>
+            <div class="mode-studio-top">
+              <label for="outputMode"><span>โหมด</span><select id="outputMode"></select></label>
+              <label for="outputGroup"><span>Group ของโหมดนี้</span><select id="outputGroup"></select></label>
+            </div>
+            <div class="mode-controls" id="modeControls" role="group" aria-label="ตั้งค่าโหมดที่เลือก"></div>
+          </section>
+
+          <details class="panel action-menu" open>
+            <summary>ผูกโหมดกับ Group</summary>
+            <p class="hint-text">URL ของแต่ละโหมดจะใช้ Group ที่ผูกไว้ เว้นแต่ระบุ <code>&amp;group=...</code> ใน URL</p>
+            <div class="mode-group-map" id="modeGroupMap" role="group" aria-label="การผูกโหมดกับ Group"></div>
+          </details>
+
+          <details class="panel action-menu" id="urlCenter">
+            <summary>URL Center และ OBS Sources</summary>
+            <p class="hint-text">Live Display URL ใช้กับ Live Control ส่วน Classic/Fixed URL ใช้สร้าง Source ตาม Mode Studio และ Group</p>
+            <div class="url-list" id="urlList" role="region" aria-label="รายการ URL สำหรับ Display และ OBS"></div>
+          </details>
+        </section>
+
+        <section class="workspace-view" id="view-settings" role="tabpanel" aria-labelledby="tab-settings" data-view-panel="settings" hidden>
+          <div class="section-intro">
+            <div>
+              <p class="eyebrow">PROJECT + OBS</p>
+              <h1>ตั้งค่าและสำรองข้อมูล</h1>
+              <p>ค่ารหัสผ่าน OBS ใช้เฉพาะ session นี้และจะไม่ถูกบันทึกหรือ Export</p>
+            </div>
+          </div>
+
+          <div class="migration-notice migration-panel" id="migrationNotice" role="status" hidden>
+            <strong id="migrationTitle">พบข้อมูลจากระบบ redesign เดิมอีกชุด</strong>
+            <span id="migrationText">ระบบใช้ข้อมูล GitHub v3 เป็นหลักและไม่ได้ merge อัตโนมัติเพื่อป้องกันข้อมูลชนกัน</span>
+            <div class="migration-actions">
+              <button class="btn secondary compact" id="mergeRedesignBtn" type="button">รวมข้อมูล redesign เข้ามา</button>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head"><div><span class="panel-kicker">PROJECT DEFAULTS</span><h2>ค่ากลางของโปรเจกต์</h2></div></div>
+            <div class="form-grid">
+              <label class="span-2" for="projectName"><span>ชื่อโปรเจกต์</span><input id="projectName" type="text" maxlength="120"></label>
+              <label for="opacity"><span>ความโปร่งใส <b id="opacityValue">100%</b></span><input id="opacity" type="range" min="0" max="100" step="1"></label>
+            </div>
+            <div class="toggle-grid">
+              <label class="toggle-card"><input id="autoPlay" type="checkbox"><span><strong>Auto Play</strong><small>หมุน Sponsor ตามเวลาที่กำหนด</small></span></label>
+              <label class="toggle-card"><input id="safeArea" type="checkbox"><span><strong>Safe Area</strong><small>แสดงกรอบช่วยจัดตำแหน่งใน Preview</small></span></label>
+              <label class="toggle-card"><input id="showNames" type="checkbox"><span><strong>Show Names (Master)</strong><small>ปิดเพื่อซ่อนชื่อในทุกโหมด Broadcast</small></span></label>
+              <label class="toggle-card"><input id="showTier" type="checkbox"><span><strong>Show Tier (Master)</strong><small>ปิดเพื่อซ่อนระดับ Sponsor ทุกโหมด</small></span></label>
+            </div>
+          </section>
+
+          <section class="panel obs-panel">
+            <div class="panel-head">
+              <div><span class="panel-kicker">OBS WEBSOCKET V5</span><h2>เชื่อมต่อ OBS</h2><p id="obsFeedback" class="inline-feedback">ยังไม่ได้เชื่อมต่อ</p></div>
+              <span class="status-chip" id="obsConnectionBadge"><span class="status-dot"></span>Offline</span>
+            </div>
+            <form id="obsConnectForm">
+              <div class="form-grid">
+                <label for="obsHost"><span>Host</span><input id="obsHost" type="text" autocomplete="off"></label>
+                <label for="obsPort"><span>Port</span><input id="obsPort" type="number" min="1" max="65535"></label>
+                <label class="span-2" for="obsPassword"><span>Password <small class="session-only">SESSION ONLY</small></span><input id="obsPassword" type="password" autocomplete="current-password"></label>
+                <label class="span-2" for="obsSourceName"><span>Dynamic Source Name</span><input id="obsSourceName" type="text" maxlength="160"></label>
+                <label for="obsWidth"><span>Width</span><input id="obsWidth" type="number" min="320" max="7680"></label>
+                <label for="obsHeight"><span>Height</span><input id="obsHeight" type="number" min="180" max="4320"></label>
+              </div>
+              <button class="btn primary full" id="obsConnectBtn" type="submit"><span id="obsConnectLabel">Connect OBS</span></button>
+            </form>
+            <div class="obs-action-grid">
+              <button class="btn secondary" id="createSourceBtn" type="button">สร้าง/อัปเดต Live Source</button>
+              <button class="btn secondary" id="refreshSourceBtn" type="button">Refresh Source</button>
+              <button class="btn secondary" id="showSourceBtn" type="button">แสดง Scene Item</button>
+              <button class="btn secondary" id="hideSourceBtn" type="button">ซ่อน Scene Item</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><div><span class="panel-kicker">BACKUP + RECOVERY</span><h2>สำรองและย้ายโปรเจกต์</h2></div></div>
+            <div class="backup-grid">
+              <button class="backup-card" id="exportProjectBtn" type="button"><span aria-hidden="true">⇩</span><strong>Export Project</strong><small>รวม state, Groups, Playlists, Mode settings และรูป</small></button>
+              <label class="backup-card" for="importProjectInput"><input id="importProjectInput" type="file" accept="application/json,.json"><span aria-hidden="true">⇧</span><strong>Import Project</strong><small>ตรวจข้อมูลและ rollback หากเขียนรูปไม่ครบ</small></label>
+              <button class="backup-card" id="loadSampleBtn" type="button"><span aria-hidden="true">✦</span><strong>โหลดข้อมูลตัวอย่าง</strong><small>สร้าง Sponsor สำหรับลองทุกโหมด</small></button>
+            </div>
+          </section>
+
+          <section class="panel support-panel">
+            <div><span class="panel-kicker">PEPSLIVE</span><h2>สนับสนุนโปรเจกต์</h2><p>PepsLive Sponsor Dock สำหรับงานไลฟ์กีฬาและ OBS</p></div>
+            <a class="btn secondary" href="https://heylink.me/pepslive/" target="_blank" rel="noopener">เปิดหน้าสนับสนุน</a>
+          </section>
+
+          <section class="panel danger-zone">
+            <div><h2>Danger Zone</h2><p>ล้าง Groups, Playlists, Mode settings และรูปทั้งหมดใน browser profile นี้</p></div>
+            <button class="btn danger" id="resetProjectBtn" type="button">Reset โปรเจกต์ทั้งหมด</button>
+          </section>
+        </section>
+      </main>
+
+      <aside class="preview-rail" aria-label="Live Preview">
+        <section class="preview-card">
+          <div class="preview-head">
+            <div><span class="preview-label"><i></i> LIVE PREVIEW</span><strong id="previewModeLabel">Auto Output</strong></div>
+            <div class="preview-actions">
+              <a class="icon-button" id="openPreviewDisplay" href="./sponsor-display.html?mode=live" target="_blank" rel="noopener" aria-label="เปิด Display เต็มหน้าจอ">↗</a>
+              <button class="icon-button" id="reloadPreviewBtn" type="button" aria-label="Reload Preview">↻</button>
+            </div>
+          </div>
+          <div class="preview-frame">
+            <iframe id="previewFrame" src="about:blank" title="Sponsor Preview"></iframe>
+          </div>
+          <div class="preview-footer"><span>1920 × 1080</span><span id="previewStatus">กำลัง sync</span></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <template id="sponsorCardTemplate">
+    <article class="sponsor-card">
+      <div class="sponsor-logo-wrap"><img class="sponsor-logo" alt=""></div>
+      <div class="sponsor-fields">
+        <label><span>ชื่อ Sponsor</span><input class="sponsor-name" type="text" maxlength="120"></label>
+        <label><span>Tier</span>
+          <select class="sponsor-tier"><option value="main">Main Sponsor</option><option value="gold">Gold Sponsor</option><option value="silver">Silver Sponsor</option><option value="partner">Partner</option></select>
+        </label>
+        <label><span>เวลาแสดง</span><input class="sponsor-duration" type="number" min="2" max="60" step="1"></label>
+      </div>
+      <div class="sponsor-memberships"></div>
+      <div class="sponsor-actions">
+        <label class="mini-toggle"><input class="sponsor-enabled" type="checkbox"><span>เปิดใช้งาน</span></label>
+        <button class="btn tiny secondary add-to-group" type="button">＋ Group</button>
+        <button class="btn tiny secondary add-to-playlist" type="button">＋ Playlist</button>
+        <button class="btn tiny danger remove-sponsor" type="button">ลบถาวร</button>
+      </div>
+    </article>
+  </template>
+
+  <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <form method="dialog">
+      <span class="dialog-mark" aria-hidden="true">!</span>
+      <h2 id="confirmTitle">ยืนยันการทำรายการ</h2>
+      <p id="confirmMessage"></p>
+      <div class="dialog-actions">
+        <button class="btn secondary" id="confirmCancelBtn" value="cancel">ยกเลิก</button>
+        <button class="btn danger" id="confirmAcceptBtn" value="confirm">ยืนยัน</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="./assets/sponsor-mode-registry.js"></script>
+  <script src="./assets/sponsor-shared.js"></script>
+  <script src="./assets/sponsor-control.js"></script>
 </body>
 </html>

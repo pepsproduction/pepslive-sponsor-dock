@@ -1,0 +1,15 @@
+{
+  "name": "pepslive-sponsor-dock",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Static OBS sponsor control and display for PepsLive",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node scripts/check-project.js",
+    "test:static": "node scripts/check-project.js",
+    "test:browser": "node scripts/browser-smoke.js",
+    "test": "node scripts/check-project.js && node scripts/browser-smoke.js"
+  }
+}
