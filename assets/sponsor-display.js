@@ -30,6 +30,7 @@
   let rendererCleanup = null;
   let autoTimer = null;
   let effectTimer = null;
+  let resizeTimer = null;
   let effectMode = "";
   let effectGroupId = "";
   let effectExpiresAt = 0;
@@ -45,8 +46,10 @@
   function clearRuntime() {
     clearTimeout(autoTimer);
     clearTimeout(effectTimer);
+    clearTimeout(resizeTimer);
     autoTimer = null;
     effectTimer = null;
+    resizeTimer = null;
     if (typeof rendererCleanup === "function") {
       try {
         rendererCleanup();
@@ -65,7 +68,12 @@
 
   function resolveContext() {
     if (!isManagedOutput) {
-      const mode = Modes.has(requestedMode) ? requestedMode : state.mode;
+      const mappedMode = Modes.mapRedesignMode(requestedMode);
+      const mode = Modes.has(requestedMode)
+        ? requestedMode
+        : Modes.has(mappedMode)
+          ? mappedMode
+          : state.mode;
       const group = state.groups.find((item) => item.id === requestedGroup)
         || P.getGroup(state, state.modeGroups[mode])
         || P.getGroup(state);
@@ -211,6 +219,14 @@
       paused: context.paused,
       getImageUrl: P.dbGetImageUrl,
       isCurrent: () => generation === renderGeneration,
+      onEmpty: () => {
+        if (generation !== renderGeneration) return;
+        setDiagnostic(
+          "โหลดรูป Sponsor ไม่สำเร็จ",
+          "Group นี้ยังมีรายการ Sponsor แต่ไฟล์รูปหายหรืออ่านไม่ได้ กรุณาเปลี่ยนรูปจากหน้า Control",
+          true
+        );
+      },
       onIndexChange: (nextIndex) => {
         if (generation !== renderGeneration) return;
         currentIndex = normalizeIndex(nextIndex, context.sponsors.length);
@@ -223,8 +239,9 @@
     }
 
     rendererCleanup = typeof cleanup === "function" ? cleanup : null;
-    broadcastPlayback(context, safeIndex);
-    scheduleAuto(context, safeIndex);
+    const renderedIndex = normalizeIndex(currentIndex, context.sponsors.length);
+    broadcastPlayback(context, renderedIndex);
+    scheduleAuto(context, renderedIndex);
   }
 
   function armEffectTimer() {
@@ -325,6 +342,14 @@
     } else {
       render();
     }
+  });
+
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      render();
+    }, 80);
   });
 
   window.addEventListener("pagehide", (event) => {

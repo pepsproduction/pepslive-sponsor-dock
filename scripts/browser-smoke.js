@@ -83,21 +83,39 @@ class CdpClient {
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.id && this.pending.has(message.id)) {
-        const { resolve, reject } = this.pending.get(message.id);
+        const { resolve, reject, timer } = this.pending.get(message.id);
         this.pending.delete(message.id);
+        clearTimeout(timer);
         if (message.error) reject(new Error(message.error.message || "CDP request failed"));
         else resolve(message);
       } else {
         this.events.push(message);
       }
     };
+    socket.onclose = () => {
+      for (const { reject, timer } of this.pending.values()) {
+        clearTimeout(timer);
+        reject(new Error("Chrome DevTools connection closed"));
+      }
+      this.pending.clear();
+    };
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeout = 20000) {
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Chrome DevTools command timed out: ${method}`));
+      }, timeout);
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -423,6 +441,331 @@ async function waitForDisplay(cdp, mode, groupId = "", sponsorName = "") {
   })()`), `${mode} display renderer`);
 }
 
+const MODE_SIGNATURE_SELECTORS = Object.freeze({
+  grid: ".psm-grid-motion",
+  rotator: ".psm-rotator",
+  ticker: ".psm-ticker",
+  bounce: ".psm-bounce",
+  rain: ".psm-rain",
+  cover3d: ".psm-cover",
+  pulse: ".psm-anim-pulse",
+  spin: ".psm-anim-spin",
+  wiggle: ".psm-anim-wiggle",
+  float: ".psm-anim-float",
+  swing: ".psm-anim-swing",
+  wave: ".psm-wave",
+  orbit: ".psm-orbit",
+  spotlight: ".psm-spotlight",
+  lower_third: ".psm-lower-third",
+  corner_badge: ".psm-corner",
+  side_tower: ".psm-side-tower",
+  broadcast_ticker: ".psm-broadcast-ticker",
+  grid_board: ".psm-grid-board",
+  sponsor_break: ".psm-sponsor-break",
+  goal_popup: ".psm-goal"
+});
+
+const MODE_MINIMUM_VISIBLE = Object.freeze({
+  grid: 2,
+  ticker: 2,
+  bounce: 2,
+  rain: 2,
+  cover3d: 2,
+  pulse: 2,
+  spin: 2,
+  wiggle: 2,
+  float: 2,
+  swing: 2,
+  wave: 2,
+  orbit: 3,
+  lower_third: 2,
+  side_tower: 2,
+  broadcast_ticker: 2,
+  grid_board: 2,
+  sponsor_break: 2
+});
+
+const MODE_MOTION_SELECTORS = Object.freeze({
+  ticker: ".psm-ticker-track",
+  bounce: ".psm-bounce .psm-logo",
+  rain: ".psm-rain-drop",
+  pulse: ".psm-anim-pulse .psm-logo",
+  spin: ".psm-anim-spin .psm-logo",
+  wiggle: ".psm-anim-wiggle .psm-logo",
+  float: ".psm-anim-float .psm-logo",
+  swing: ".psm-anim-swing .psm-logo",
+  wave: ".psm-wave .psm-logo",
+  orbit: ".psm-orbit-ring",
+  broadcast_ticker: ".psm-ticker-track"
+});
+
+const MODE_CYCLE_MODES = new Set(["rotator", "cover3d", "spotlight"]);
+
+async function readModeVisibility(cdp, mode, options = {}) {
+  const frameSelector = options.frameSelector || "";
+  const expectedGroup = options.groupId || "";
+  const signatureSelector = MODE_SIGNATURE_SELECTORS[mode];
+  assert(signatureSelector, `Missing visibility signature for ${mode}`);
+  return cdp.evaluate(`(() => {
+    const frameSelector = ${JSON.stringify(frameSelector)};
+    const frame = frameSelector ? document.querySelector(frameSelector) : null;
+    const doc = frameSelector ? frame?.contentDocument : document;
+    const view = doc?.defaultView;
+    const layer = doc?.getElementById("sponsorLayer");
+    const stage = doc?.getElementById("displayStage");
+    const signature = layer?.querySelector(${JSON.stringify(signatureSelector)}) || null;
+    const viewport = {
+      left: 0,
+      top: 0,
+      right: view?.innerWidth || doc?.documentElement?.clientWidth || 0,
+      bottom: view?.innerHeight || doc?.documentElement?.clientHeight || 0
+    };
+
+    const inspect = (image) => {
+      const original = image.getBoundingClientRect();
+      let clipped = {
+        left: Math.max(viewport.left, original.left),
+        top: Math.max(viewport.top, original.top),
+        right: Math.min(viewport.right, original.right),
+        bottom: Math.min(viewport.bottom, original.bottom)
+      };
+      let effectiveOpacity = 1;
+      let cssVisible = true;
+      let node = image;
+      while (node && node.nodeType === Node.ELEMENT_NODE) {
+        const style = view.getComputedStyle(node);
+        const opacity = Number.parseFloat(style.opacity);
+        effectiveOpacity *= Number.isFinite(opacity) ? opacity : 1;
+        if (
+          style.display === "none"
+          || style.visibility === "hidden"
+          || style.visibility === "collapse"
+          || style.contentVisibility === "hidden"
+        ) {
+          cssVisible = false;
+        }
+        if (node !== image) {
+          const bounds = node.getBoundingClientRect();
+          if (["hidden", "clip", "scroll", "auto"].includes(style.overflowX)) {
+            clipped.left = Math.max(clipped.left, bounds.left);
+            clipped.right = Math.min(clipped.right, bounds.right);
+          }
+          if (["hidden", "clip", "scroll", "auto"].includes(style.overflowY)) {
+            clipped.top = Math.max(clipped.top, bounds.top);
+            clipped.bottom = Math.min(clipped.bottom, bounds.bottom);
+          }
+        }
+        node = node.parentElement;
+      }
+      const visibleWidth = Math.max(0, clipped.right - clipped.left);
+      const visibleHeight = Math.max(0, clipped.bottom - clipped.top);
+      const visibleArea = visibleWidth * visibleHeight;
+      const originalArea = Math.max(0, original.width * original.height);
+      const visibleFraction = originalArea > 0 ? visibleArea / originalArea : 0;
+      return {
+        name: image.alt,
+        complete: image.complete,
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+        rect: {
+          left: Math.round(original.left),
+          top: Math.round(original.top),
+          width: Math.round(original.width),
+          height: Math.round(original.height)
+        },
+        effectiveOpacity,
+        cssVisible,
+        visibleArea,
+        visibleFraction,
+        visible: image.complete
+          && image.naturalWidth > 0
+          && image.naturalHeight > 0
+          && original.width > 0
+          && original.height > 0
+          && effectiveOpacity >= 0.05
+          && cssVisible
+          && visibleArea >= 256
+          && visibleFraction >= 0.05
+      };
+    };
+
+    const inspectFrame = () => {
+      if (!frameSelector) return { required: false, visible: true };
+      if (!frame) return { required: true, visible: false, reason: "missing" };
+      const outerView = document.defaultView;
+      const original = frame.getBoundingClientRect();
+      let clipped = {
+        left: Math.max(0, original.left),
+        top: Math.max(0, original.top),
+        right: Math.min(outerView.innerWidth, original.right),
+        bottom: Math.min(outerView.innerHeight, original.bottom)
+      };
+      let effectiveOpacity = 1;
+      let cssVisible = true;
+      let node = frame;
+      while (node && node.nodeType === Node.ELEMENT_NODE) {
+        const style = outerView.getComputedStyle(node);
+        const opacity = Number.parseFloat(style.opacity);
+        effectiveOpacity *= Number.isFinite(opacity) ? opacity : 1;
+        if (
+          style.display === "none"
+          || style.visibility === "hidden"
+          || style.visibility === "collapse"
+          || style.contentVisibility === "hidden"
+        ) {
+          cssVisible = false;
+        }
+        if (node !== frame) {
+          const bounds = node.getBoundingClientRect();
+          if (["hidden", "clip", "scroll", "auto"].includes(style.overflowX)) {
+            clipped.left = Math.max(clipped.left, bounds.left);
+            clipped.right = Math.min(clipped.right, bounds.right);
+          }
+          if (["hidden", "clip", "scroll", "auto"].includes(style.overflowY)) {
+            clipped.top = Math.max(clipped.top, bounds.top);
+            clipped.bottom = Math.min(clipped.bottom, bounds.bottom);
+          }
+        }
+        node = node.parentElement;
+      }
+      const visibleWidth = Math.max(0, clipped.right - clipped.left);
+      const visibleHeight = Math.max(0, clipped.bottom - clipped.top);
+      const visibleArea = visibleWidth * visibleHeight;
+      const originalArea = Math.max(0, original.width * original.height);
+      const visibleFraction = originalArea > 0 ? visibleArea / originalArea : 0;
+      const container = frame.parentElement;
+      const fillsContainer = !!container
+        && Math.abs(original.width - container.clientWidth) <= 3
+        && Math.abs(original.height - container.clientHeight) <= 3;
+      return {
+        required: true,
+        rect: {
+          left: Math.round(original.left),
+          top: Math.round(original.top),
+          width: Math.round(original.width),
+          height: Math.round(original.height)
+        },
+        effectiveOpacity,
+        cssVisible,
+        visibleArea,
+        visibleFraction,
+        fillsContainer,
+        visible: original.width > 0
+          && original.height > 0
+          && effectiveOpacity >= 0.05
+          && cssVisible
+          && visibleArea >= 1024
+          && visibleFraction >= 0.1
+          && fillsContainer
+      };
+    };
+
+    const images = layer ? [...layer.querySelectorAll("img.psm-logo")].map(inspect) : [];
+    return {
+      documentReady: doc?.readyState || "missing",
+      viewport: { width: viewport.right, height: viewport.bottom },
+      renderer: layer?.dataset.renderer || "",
+      renderedGroup: stage?.dataset.group || "",
+      expectedGroup: ${JSON.stringify(expectedGroup)},
+      signaturePresent: !!signature,
+      signatureClass: signature?.className || "",
+      frameVisibility: inspectFrame(),
+      imageCount: images.length,
+      allImagesLoaded: images.length > 0 && images.every((image) =>
+        image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+      ),
+      visibleCount: images.filter((image) => image.visible).length,
+      images
+    };
+  })()`);
+}
+
+async function waitForModeVisible(cdp, mode, options = {}) {
+  const minimumVisible = Math.max(
+    MODE_MINIMUM_VISIBLE[mode] || 1,
+    Number(options.minimumVisible) || 0
+  );
+  let lastReport = null;
+  try {
+    await waitFor(async () => {
+      lastReport = await readModeVisibility(cdp, mode, options);
+      return lastReport.documentReady === "complete"
+        && lastReport.renderer === mode
+        && (!options.groupId || lastReport.renderedGroup === options.groupId)
+        && lastReport.signaturePresent
+        && (!options.frameSelector || lastReport.frameVisibility?.visible)
+        && lastReport.allImagesLoaded
+        && lastReport.visibleCount >= minimumVisible;
+    }, `${mode} visibly rendered output`, options.timeout || 10000);
+  } catch (error) {
+    throw new Error(`${error.message} Last visibility report: ${JSON.stringify(lastReport)}`);
+  }
+  return lastReport;
+}
+
+async function readModeMotion(cdp, mode) {
+  const selector = MODE_MOTION_SELECTORS[mode];
+  assert(selector, `Missing motion selector for ${mode}`);
+  return cdp.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return { present: false };
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const animation = element.getAnimations()[0] || null;
+    return {
+      present: true,
+      transform: style.transform,
+      left: Number(rect.left.toFixed(3)),
+      top: Number(rect.top.toFixed(3)),
+      animationTime: Number.isFinite(animation?.currentTime) ? animation.currentTime : null,
+      playState: animation?.playState || ""
+    };
+  })()`);
+}
+
+async function assertModeMotion(cdp, mode) {
+  const before = await readModeMotion(cdp, mode);
+  await wait(320);
+  const after = await readModeMotion(cdp, mode);
+  const visuallyChanged = before.transform !== after.transform
+    || before.left !== after.left
+    || before.top !== after.top;
+  const timelineAdvanced = before.animationTime === null
+    || (after.animationTime !== null && after.animationTime > before.animationTime);
+  assert(
+    before.present && after.present && visuallyChanged && timelineAdvanced,
+    `${mode} animation must visibly progress while running: ${JSON.stringify({ before, after })}`
+  );
+}
+
+async function readModeCycleIdentity(cdp, mode) {
+  return cdp.evaluate(`(() => {
+    const mode = ${JSON.stringify(mode)};
+    if (mode === "rotator") {
+      return document.querySelector(".psm-rotator .psm-logo.psm-active")?.alt || "";
+    }
+    if (mode === "cover3d") {
+      const active = [...document.querySelectorAll(".psm-cover-card")]
+        .find((card) => Number.parseFloat(card.style.opacity) >= 0.99);
+      return active?.querySelector("img.psm-logo")?.alt || "";
+    }
+    if (mode === "spotlight") {
+      return document.querySelector(".psm-spotlight-main img.psm-logo")?.alt || "";
+    }
+    return "";
+  })()`);
+}
+
+async function assertModeCycle(cdp, mode) {
+  const before = await readModeCycleIdentity(cdp, mode);
+  assert(before, `${mode} timed cycle must expose an active Sponsor`);
+  let after = before;
+  await waitFor(async () => {
+    after = await readModeCycleIdentity(cdp, mode);
+    return !!after && after !== before;
+  }, `${mode} timed Sponsor cycle`, 2500);
+}
+
 async function seedCanonicalProject(cdp) {
   return cdp.evaluate(`(async () => {
     const svg = (label, color) => \`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">
@@ -584,6 +927,9 @@ async function seedCapacityProject(cdp) {
       PepsSponsorModes.ids.map((mode) => [mode, PepsSponsorModes.defaultsFor(mode)])
     );
     state.modeSettings.lower_third.maxVisible = 4;
+    state.modeSettings.rotator.stayTime = 0.5;
+    state.modeSettings.cover3d.coverSpeed = 200;
+    state.modeSettings.spotlight.spotlightSpeed = 200;
     state.settings = {
       autoPlay: true,
       safeArea: false,
@@ -618,36 +964,49 @@ async function seedCapacityProject(cdp) {
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
-    console.log("Unified browser regression skipped: Chrome/Edge not found.");
-    return;
+    throw new Error("Unified browser regression requires Chrome or Edge, but neither executable was found.");
   }
 
-  const server = await startStaticServer();
-  const appPort = server.address().port;
-  const origin = `http://127.0.0.1:${appPort}`;
-  const debugPort = await freePort();
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "pepslive-unified-modes-"));
-  const downloadPath = path.join(profile, "downloads");
-  const fixturePath = path.join(profile, "fixtures");
-  fs.mkdirSync(fixturePath, { recursive: true });
-  const child = spawn(chrome, [
-    "--headless=new",
-    "--disable-gpu",
-    "--disable-extensions",
-    "--no-first-run",
-    "--disable-background-networking",
-    "--disable-component-update",
-    `--remote-debugging-port=${debugPort}`,
-    `--user-data-dir=${profile}`,
-    "--window-size=1440,1000",
-    "about:blank"
-  ], { stdio: "ignore" });
-
+  let profile = "";
+  let server = null;
+  let child = null;
+  let chromeStderr = "";
   let socket = null;
   const extraPages = [];
   try {
+    const profileRoot = process.env.PEPSLIVE_BROWSER_TMP || os.tmpdir();
+    fs.mkdirSync(profileRoot, { recursive: true });
+    profile = fs.mkdtempSync(path.join(profileRoot, "pepslive-unified-modes-"));
+    server = await startStaticServer();
+    const appPort = server.address().port;
+    const origin = `http://127.0.0.1:${appPort}`;
+    const debugPort = await freePort();
+    const downloadPath = path.join(profile, "downloads");
+    const fixturePath = path.join(profile, "fixtures");
+    fs.mkdirSync(fixturePath, { recursive: true });
+    let chromeLaunchError = null;
+    child = spawn(chrome, [
+      "--headless=new",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--no-first-run",
+      "--disable-background-networking",
+      "--disable-component-update",
+      `--remote-debugging-port=${debugPort}`,
+      `--user-data-dir=${profile}`,
+      "--window-size=1440,1000",
+      "about:blank"
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    child.on("error", (error) => {
+      chromeLaunchError = error;
+    });
+    child.stderr.on("data", (chunk) => {
+      chromeStderr = `${chromeStderr}${chunk}`.slice(-12000);
+    });
+
     let page;
     await waitFor(async () => {
+      if (chromeLaunchError) throw chromeLaunchError;
       try {
         const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
         page = targets.find((target) => target.type === "page");
@@ -1476,6 +1835,55 @@ async function main() {
     assert(dock400.goalTop < 720, "Primary Live controls must remain in the first 400x720 Dock viewport");
     assert(!dock400.previewVisible, "Live Preview must collapse in a narrow Dock");
 
+    await cdp.evaluate(`(async () => {
+      const base = await PepsSponsor.loadStateAuthoritative();
+      const next = PepsSponsor.clone(base);
+      const imageIds = next.images.map((image) => image.id);
+      next.groups = next.groups.filter((group) => ![
+        "group_collision",
+        "group__collision",
+        "group_collision_h09a9k0f",
+        "collision",
+        "group_550e8400-e29b-41d4-a716-446655440000",
+        "group_550e8400_e29b_41d4_a716_446655440000",
+        "กลุ่มพิเศษ"
+      ].includes(group.id));
+      next.groups.push(
+        { id: "group_collision", name: "Generated Collision", imageIds: [...imageIds] },
+        { id: "group__collision", name: "Imported Double Separator", imageIds: [...imageIds] },
+        { id: "group_collision_h09a9k0f", name: "Hash-lookalike Safe Group", imageIds: [...imageIds] },
+        { id: "collision", name: "Imported Collision", imageIds: [...imageIds] },
+        {
+          id: "group_550e8400-e29b-41d4-a716-446655440000",
+          name: "Generated UUID Group",
+          imageIds: [...imageIds]
+        },
+        {
+          id: "group_550e8400_e29b_41d4_a716_446655440000",
+          name: "Imported UUID Lookalike",
+          imageIds: [...imageIds]
+        },
+        { id: "กลุ่มพิเศษ", name: "Unicode Group", imageIds: [...imageIds] }
+      );
+      next.modeGroups.bounce = "group_collision";
+      next.modeGroups.pulse = "กลุ่มพิเศษ";
+      next.modeGroups.wiggle = "group_550e8400-e29b-41d4-a716-446655440000";
+      await PepsSponsor.saveStateLocked(next, { base, silent: true });
+    })()`);
+    await navigate(
+      cdp,
+      origin,
+      "/sponsor-control.html?qa=obs-source-identities#modes",
+      (location) => location.pathname.endsWith("/sponsor-control.html")
+        && location.hash === "#modes",
+      "OBS source identity regression setup"
+    );
+    await waitFor(
+      () => cdp.evaluate(`PepsSponsor.loadState().groups.some((group) => group.id === "กลุ่มพิเศษ")
+        && document.querySelector('#outputGroup option[value="collision"]') !== null`),
+      "OBS collision groups after reload"
+    );
+
     const obsMarker = cdp.events.length;
     await cdp.evaluate(`(() => {
       document.getElementById("obsPassword").value = "qa-session-only";
@@ -1528,6 +1936,15 @@ async function main() {
 
     await cdp.evaluate(`(() => {
       window.__obsMock.resetCalls();
+      window.__obsMock.inputs.PEPS_SPONSOR_ORBIT_BETA = {
+        inputKind: "browser_source",
+        inputSettings: {
+          is_local_file: true,
+          local_file: "C:/stale/orbit.html",
+          url: ""
+        }
+      };
+      delete window.__obsMock.sceneItems.PEPS_SPONSOR_ORBIT_BETA;
       const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
         const input = item.querySelector("input");
         if (!input) return false;
@@ -1539,28 +1956,37 @@ async function main() {
     })()`);
     await waitFor(
       () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
-        call.requestType === "CreateInput"
+        call.requestType === "SetInputSettings"
+        && call.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA"
         && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "orbit"
+      ) && window.__obsMock.calls.some((call) =>
+        call.requestType === "CreateSceneItem"
+        && call.requestData.sourceName === "PEPS_SPONSOR_ORBIT_BETA"
       )`),
-      "fixed explicit OBS source creation"
+      "stale fixed OBS source repair"
     );
     const fixedObs = await cdp.evaluate(`(() => {
-      const create = window.__obsMock.calls.find((call) =>
-        call.requestType === "CreateInput"
-        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "orbit"
+      const update = window.__obsMock.calls.find((call) =>
+        call.requestType === "SetInputSettings"
+        && call.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA"
       );
       return {
-        create,
+        update,
+        create: window.__obsMock.calls.find((call) => call.requestType === "CreateInput"),
+        createSceneItem: window.__obsMock.calls.find((call) => call.requestType === "CreateSceneItem"),
         requestTypes: window.__obsMock.calls.map((call) => call.requestType)
       };
     })()`);
-    assert(!!fixedObs.create, "Absent fixed source must call CreateInput");
-    assert(fixedObs.create.requestData.inputKind === "browser_source", "Fixed source must be a browser_source");
+    assert(!fixedObs.create, "Repairing a stale fixed source must not create a duplicate OBS input");
     assert(
-      fixedObs.create.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA",
-      `Fixed source name must use stable mode/group IDs: ${fixedObs.create.requestData.inputName}`
+      fixedObs.update?.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA",
+      `Fixed source name must use stable mode/group IDs: ${fixedObs.update?.requestData.inputName}`
     );
-    const fixedSettings = fixedObs.create.requestData.inputSettings;
+    assert(
+      fixedObs.createSceneItem?.requestData.sourceName === "PEPS_SPONSOR_ORBIT_BETA",
+      "A repaired fixed source missing from the current scene must receive CreateSceneItem"
+    );
+    const fixedSettings = fixedObs.update.requestData.inputSettings;
     const fixedUrl = new URL(fixedSettings.url);
     assert(fixedUrl.searchParams.get("mode") === "orbit", "Fixed source URL must retain its explicit mode");
     assert(fixedUrl.searchParams.get("group") === "group_beta", "Fixed source URL must retain its explicit group");
@@ -1594,16 +2020,320 @@ async function main() {
 
     await cdp.evaluate(`(() => {
       window.__obsMock.resetCalls();
-      const legacyName = "PepsLive Sponsor Dock - " + PepsSponsorModes.labels.spotlight + " - Beta Group";
+      const mode = document.getElementById("outputMode");
+      mode.value = "bounce";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "group_collision"
+        && PepsSponsor.loadState().mode === "bounce"
+        && PepsSponsor.loadState().modeGroups.bounce === "group_collision"`),
+      "generated collision-group Mode URL"
+    );
+    await cdp.evaluate(`(() => {
+      const legacyUrl = new URL(document.getElementById("currentModeUrl").value);
+      legacyUrl.searchParams.set("group", "collision");
+      window.__obsMock.inputs.PEPS_SPONSOR_BOUNCE_COLLISION = {
+        inputKind: "browser_source",
+        inputSettings: { is_local_file: false, url: legacyUrl.href }
+      };
+      window.__obsMock.sceneItems.PEPS_SPONSOR_BOUNCE_COLLISION = ++window.__obsMock.nextSceneItemId;
+      document.getElementById("createModeSourceBtn").click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "CreateInput"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("group") === "group_collision"
+      )`),
+      "first collision-safe OBS source"
+    );
+    const collisionGroupChange = await cdp.evaluate(`(() => {
+      const group = document.getElementById("outputGroup");
+      group.value = "collision";
+      group.dispatchEvent(new Event("change", { bubbles: true }));
+      return {
+        value: group.value,
+        mode: document.getElementById("outputMode").value,
+        currentUrlGroup: new URL(document.getElementById("currentModeUrl").value).searchParams.get("group"),
+        persistedGroup: PepsSponsor.loadState().modeGroups.bounce,
+        optionValues: [...group.options].map((option) => option.value)
+      };
+    })()`);
+    assert(
+      collisionGroupChange.value === "collision"
+        && collisionGroupChange.mode === "bounce"
+        && collisionGroupChange.currentUrlGroup === "collision",
+      `Imported collision Group selection did not update Mode Studio: ${JSON.stringify(collisionGroupChange)}`
+    );
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "collision"
+        && PepsSponsor.loadState().modeGroups.bounce === "collision"`),
+      "imported collision-group Mode URL"
+    );
+    await cdp.evaluate(`document.getElementById("createModeSourceBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputSettings"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "bounce"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("group") === "collision"
+      )`),
+      "relocated collision-safe OBS source update"
+    );
+    await cdp.evaluate(`(() => {
+      const group = document.getElementById("outputGroup");
+      group.value = "group__collision";
+      group.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "group__collision"
+        && PepsSponsor.loadState().modeGroups.bounce === "group__collision"`),
+      "double-separator collision-group Mode URL"
+    );
+    await cdp.evaluate(`document.getElementById("createModeSourceBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.filter((call) =>
+        call.requestType === "CreateInput"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "bounce"
+      ).length === 2`),
+      "third collision-safe OBS source"
+    );
+    await cdp.evaluate(`(() => {
+      const group = document.getElementById("outputGroup");
+      group.value = "group_collision_h09a9k0f";
+      group.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group")
+        === "group_collision_h09a9k0f"
+        && PepsSponsor.loadState().modeGroups.bounce === "group_collision_h09a9k0f"`),
+      "hash-lookalike safe Group Mode URL"
+    );
+    await cdp.evaluate(`document.getElementById("createModeSourceBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.filter((call) =>
+        call.requestType === "CreateInput"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "bounce"
+      ).length === 3`),
+      "hash-lookalike safe OBS source"
+    );
+    const collisionSources = await cdp.evaluate(`(() => {
+      return Object.entries(window.__obsMock.inputs)
+        .filter(([name, input]) => name.startsWith("PEPS_SPONSOR_BOUNCE_")
+          && new URL(input.inputSettings.url).searchParams.get("mode") === "bounce")
+        .map(([name, input]) => ({
+          name,
+          group: new URL(input.inputSettings.url).searchParams.get("group")
+        }));
+    })()`);
+    const generatedCollision = collisionSources.find((source) => source.group === "group_collision");
+    const importedCollision = collisionSources.find((source) => source.group === "collision");
+    const doubleSeparatorCollision = collisionSources.find((source) => source.group === "group__collision");
+    const hashLookalikeCollision = collisionSources.find((source) => source.group === "group_collision_h09a9k0f");
+    assert(
+      generatedCollision?.name === "PEPS_SPONSOR_BOUNCE_COLLISION",
+      `Generated Group IDs must retain their existing stable source name: ${JSON.stringify(collisionSources)}`
+    );
+    assert(
+      importedCollision?.name === "PEPS_SPONSOR_BOUNCE_COLLISION__H09A9K0F"
+        && importedCollision.name !== generatedCollision.name,
+      `Lossy imported Group IDs must receive a distinct stable hash: ${JSON.stringify(collisionSources)}`
+    );
+    assert(
+      doubleSeparatorCollision?.name.startsWith("PEPS_SPONSOR_BOUNCE_COLLISION_")
+        && doubleSeparatorCollision.name !== generatedCollision.name
+        && doubleSeparatorCollision.name !== importedCollision.name,
+      `Non-canonical separators must not collide after sanitization: ${JSON.stringify(collisionSources)}`
+    );
+    assert(
+      hashLookalikeCollision?.name === "PEPS_SPONSOR_BOUNCE_COLLISION_H09A9K0F"
+        && hashLookalikeCollision.name !== importedCollision.name,
+      `A safe Group must not impersonate the imported hash namespace: ${JSON.stringify(collisionSources)}`
+    );
+    assert(
+      collisionSources.length === 4,
+      `Each distinct colliding Group must retain exactly one OBS source: ${JSON.stringify(collisionSources)}`
+    );
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const mode = document.getElementById("outputMode");
+      mode.value = "wiggle";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group")
+        === "group_550e8400-e29b-41d4-a716-446655440000"`),
+      "generated UUID Group Mode URL"
+    );
+    await cdp.evaluate(`document.getElementById("createModeSourceBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "CreateInput"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "wiggle"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("group")
+          === "group_550e8400-e29b-41d4-a716-446655440000"
+      )`),
+      "generated UUID OBS source"
+    );
+    await cdp.evaluate(`(() => {
+      const group = document.getElementById("outputGroup");
+      group.value = "group_550e8400_e29b_41d4_a716_446655440000";
+      group.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group")
+        === "group_550e8400_e29b_41d4_a716_446655440000"`),
+      "imported UUID-lookalike Group Mode URL"
+    );
+    await cdp.evaluate(`document.getElementById("createModeSourceBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.filter((call) =>
+        call.requestType === "CreateInput"
+        && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "wiggle"
+      ).length === 2`),
+      "collision-safe UUID-lookalike OBS source"
+    );
+    const uuidSources = await cdp.evaluate(`Object.entries(window.__obsMock.inputs)
+      .filter(([name, input]) => name.startsWith("PEPS_SPONSOR_WIGGLE_")
+        && new URL(input.inputSettings.url).searchParams.get("mode") === "wiggle")
+      .map(([name, input]) => ({
+        name,
+        group: new URL(input.inputSettings.url).searchParams.get("group")
+      }))`);
+    const generatedUuidSource = uuidSources.find((source) =>
+      source.group === "group_550e8400-e29b-41d4-a716-446655440000"
+    );
+    const importedUuidLookalikeSource = uuidSources.find((source) =>
+      source.group === "group_550e8400_e29b_41d4_a716_446655440000"
+    );
+    assert(
+      generatedUuidSource?.name === "PEPS_SPONSOR_WIGGLE_550E8400_E29B_41D4_A716_446655440000",
+      `Generated UUID Group must retain its established OBS source name: ${JSON.stringify(uuidSources)}`
+    );
+    assert(
+      importedUuidLookalikeSource?.name.startsWith(
+        "PEPS_SPONSOR_WIGGLE_550E8400_E29B_41D4_A716_446655440000_"
+      ) && importedUuidLookalikeSource.name !== generatedUuidSource.name,
+      `Imported underscore UUID must receive a distinct hash: ${JSON.stringify(uuidSources)}`
+    );
+    assert(uuidSources.length === 2, `UUID-lookalike Groups must retain two distinct OBS sources: ${JSON.stringify(uuidSources)}`);
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const mode = document.getElementById("outputMode");
+      mode.value = "pulse";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "กลุ่มพิเศษ"`),
+      "Unicode Group Mode URL"
+    );
+    await cdp.evaluate(`(() => {
+      const legacyName = "PEPS_SPONSOR_PULSE_GROUP";
+      const url = document.getElementById("currentModeUrl").value;
       window.__obsMock.inputs[legacyName] = {
         inputKind: "browser_source",
-        inputSettings: { is_local_file: false, url: "https://legacy.invalid/" }
+        inputSettings: { is_local_file: false, url }
       };
-      window.__obsMock.sceneItems[legacyName] = 991;
+      window.__obsMock.sceneItems[legacyName] = 993;
+      document.getElementById("refreshModeSourceBtn").click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputName"
+        && call.requestData.inputName === "PEPS_SPONSOR_PULSE_GROUP"
+      ) && window.__obsMock.calls.some((call) => call.requestType === "PressInputPropertiesButton")`),
+      "Unicode legacy source migration during Refresh"
+    );
+    const refreshedUnicodeSource = await cdp.evaluate(`(() => {
+      const rename = window.__obsMock.calls.find((call) =>
+        call.requestType === "SetInputName"
+        && call.requestData.inputName === "PEPS_SPONSOR_PULSE_GROUP"
+      );
+      const refresh = window.__obsMock.calls.find((call) => call.requestType === "PressInputPropertiesButton");
+      return {
+        oldExists: !!window.__obsMock.inputs.PEPS_SPONSOR_PULSE_GROUP,
+        renamedTo: rename?.requestData.newInputName || "",
+        refreshed: refresh?.requestData.inputName || "",
+        creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length
+      };
+    })()`);
+    assert(!refreshedUnicodeSource.oldExists, "Refresh must migrate the matching pre-hash source");
+    assert(
+      refreshedUnicodeSource.renamedTo.startsWith("PEPS_SPONSOR_PULSE_GROUP_")
+        && refreshedUnicodeSource.refreshed === refreshedUnicodeSource.renamedTo,
+      `Refresh must target the migrated Unicode source: ${JSON.stringify(refreshedUnicodeSource)}`
+    );
+    assert(refreshedUnicodeSource.creates === 0, "Refresh migration must not create a duplicate OBS input");
+
+    for (const aliasMigration of [
+      {
+        canonicalMode: "lower_third",
+        legacyMode: "bottom_bar",
+        legacyName: "PEPS_SPONSOR_BOTTOM_BAR_BETA",
+        canonicalName: "PEPS_SPONSOR_LOWER_THIRD_BETA"
+      },
+      {
+        canonicalMode: "sponsor_break",
+        legacyMode: "fullscreen_break",
+        legacyName: "PEPS_SPONSOR_FULLSCREEN_BREAK_BETA",
+        canonicalName: "PEPS_SPONSOR_SPONSOR_BREAK_BETA"
+      }
+    ]) {
+      await cdp.evaluate(`(() => {
+        const mode = document.getElementById("outputMode");
+        mode.value = ${JSON.stringify(aliasMigration.canonicalMode)};
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`);
+      await waitFor(
+        () => cdp.evaluate(`PepsSponsor.loadState().mode === ${JSON.stringify(aliasMigration.canonicalMode)}
+          && new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "group_beta"`),
+        `${aliasMigration.canonicalMode} selection before legacy alias migration`
+      );
+      await cdp.evaluate(`(() => {
+        window.__obsMock.resetCalls();
+        const canonicalUrl = new URL(document.getElementById("currentModeUrl").value);
+        canonicalUrl.searchParams.set("mode", ${JSON.stringify(aliasMigration.legacyMode)});
+        window.__obsMock.inputs[${JSON.stringify(aliasMigration.legacyName)}] = {
+          inputKind: "browser_source",
+          inputSettings: { is_local_file: false, url: canonicalUrl.href }
+        };
+        window.__obsMock.sceneItems[${JSON.stringify(aliasMigration.legacyName)}] = ++window.__obsMock.nextSceneItemId;
+        document.getElementById("createModeSourceBtn").click();
+      })()`);
+      await waitFor(
+        () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+          call.requestType === "SetInputName"
+          && call.requestData.inputName === ${JSON.stringify(aliasMigration.legacyName)}
+          && call.requestData.newInputName === ${JSON.stringify(aliasMigration.canonicalName)}
+        )`),
+        `${aliasMigration.legacyMode} OBS alias migration`
+      );
+      const aliasMigrationResult = await cdp.evaluate(`({
+        creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+        legacyExists: !!window.__obsMock.inputs[${JSON.stringify(aliasMigration.legacyName)}],
+        canonicalExists: !!window.__obsMock.inputs[${JSON.stringify(aliasMigration.canonicalName)}]
+      })`);
+      assert(
+        aliasMigrationResult.creates === 0
+          && !aliasMigrationResult.legacyExists
+          && aliasMigrationResult.canonicalExists,
+        `${aliasMigration.legacyMode} must migrate without duplicating its canonical OBS source: ${JSON.stringify(aliasMigrationResult)}`
+      );
+    }
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
       const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
         const input = item.querySelector("input");
         return input && new URL(input.value).searchParams.get("mode") === "spotlight";
       });
+      const legacyName = "PepsLive Sponsor Dock - " + PepsSponsorModes.labels.spotlight + " - Beta Group";
+      window.__obsMock.inputs[legacyName] = {
+        inputKind: "browser_source",
+        inputSettings: { is_local_file: false, url: row.querySelector("input").value }
+      };
+      window.__obsMock.sceneItems[legacyName] = 991;
       row?.querySelector(".url-actions button:last-child")?.click();
     })()`);
     await waitFor(
@@ -1649,8 +2379,17 @@ async function main() {
     assert(discoveredLegacySource.creates === 0, "A legacy source with the same display URL must not be duplicated");
     assert(discoveredLegacySource.canonicalExists, "A renamed legacy source must migrate by matching its display URL");
 
+    await cdp.evaluate(`(() => {
+      const mode = document.getElementById("outputMode");
+      mode.value = "spotlight";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`PepsSponsor.loadState().mode === "spotlight"
+        && new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "group_beta"`),
+      "Spotlight Mode selection before fixed-source Refresh"
+    );
     const fixedRefreshCommandId = await cdp.evaluate(`(() => {
-      document.querySelector('#modeLibrary [data-mode="spotlight"]')?.click();
       window.__obsMock.resetCalls();
       const commandId = PepsSponsor.loadState().command.id;
       document.getElementById("refreshModeSourceBtn").click();
@@ -1667,6 +2406,80 @@ async function main() {
     assert(
       fixedRefreshAfter === fixedRefreshCommandId,
       "Refreshing a fixed source must not broadcast a reload command to the Live Display"
+    );
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
+        const input = item.querySelector("input");
+        return input && new URL(input.value).searchParams.get("mode") === "display";
+      });
+      const legacyName = "PEPS_SPONSOR_DISPLAY_SPOTLIGHT_BETA";
+      window.__obsMock.inputs[legacyName] = {
+        inputKind: "browser_source",
+        inputSettings: { is_local_file: false, url: row.querySelector("input").value }
+      };
+      window.__obsMock.sceneItems[legacyName] = ++window.__obsMock.nextSceneItemId;
+      row?.querySelector(".url-actions button:last-child")?.click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputName"
+        && call.requestData.inputName === "PEPS_SPONSOR_DISPLAY_SPOTLIGHT_BETA"
+        && call.requestData.newInputName === "PEPS_SPONSOR_CLASSIC_DISPLAY"
+      )`),
+      "Classic Display legacy source migration"
+    );
+    const classicDisplayMigration = await cdp.evaluate(`({
+      creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+      canonicalExists: !!window.__obsMock.inputs.PEPS_SPONSOR_CLASSIC_DISPLAY,
+      legacyExists: !!window.__obsMock.inputs.PEPS_SPONSOR_DISPLAY_SPOTLIGHT_BETA
+    })`);
+    assert(
+      classicDisplayMigration.creates === 0
+        && classicDisplayMigration.canonicalExists
+        && !classicDisplayMigration.legacyExists,
+      `Classic Display must migrate its mode-dependent legacy source without duplication: ${JSON.stringify(classicDisplayMigration)}`
+    );
+    await cdp.evaluate(`(() => {
+      const mode = document.getElementById("outputMode");
+      mode.value = "lower_third";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`PepsSponsor.loadState().mode === "lower_third"
+        && new URL(document.getElementById("currentModeUrl").value).searchParams.get("group") === "group_beta"`),
+      "Mode change before Classic Display source reuse"
+    );
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
+        const input = item.querySelector("input");
+        return input && new URL(input.value).searchParams.get("mode") === "display";
+      });
+      row?.querySelector(".url-actions button:last-child")?.click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputSettings"
+        && call.requestData.inputName === "PEPS_SPONSOR_CLASSIC_DISPLAY"
+      )`),
+      "Classic Display source reuse after Mode change"
+    );
+    const classicDisplayReuse = await cdp.evaluate(`(() => {
+      const displayInputs = Object.entries(window.__obsMock.inputs).filter(([, input]) =>
+        new URL(input.inputSettings?.url || "", location.href).searchParams.get("mode") === "display"
+      );
+      return {
+        creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+        displayInputNames: displayInputs.map(([name]) => name)
+      };
+    })()`);
+    assert(
+      classicDisplayReuse.creates === 0
+        && classicDisplayReuse.displayInputNames.length === 1
+        && classicDisplayReuse.displayInputNames[0] === "PEPS_SPONSOR_CLASSIC_DISPLAY",
+      `Classic Display must reuse one stable OBS source across Mode changes: ${JSON.stringify(classicDisplayReuse)}`
     );
 
     await cdp.evaluate(`(() => {
@@ -1828,30 +2641,526 @@ async function main() {
     );
 
     const modeIds = await cdp.evaluate(`PepsSponsorModes.ids`);
+    const visibilityProject = await seedCapacityProject(cdp);
+    assert(
+      visibilityProject.sponsorIds.length === 5,
+      `Mode visibility fixture must contain multiple sponsors: ${JSON.stringify(visibilityProject)}`
+    );
+
+    await navigate(
+      cdp,
+      origin,
+      "/sponsor-control.html?qa=mode-studio-visibility#modes",
+      (location) => location.pathname.endsWith("/sponsor-control.html")
+        && location.hash === "#modes",
+      "Mode Studio visibility control route"
+    );
+    await waitFor(
+      () => cdp.evaluate(`document.readyState === "complete"
+        && PepsSponsor.loadState().projectName === "Capacity Playback Regression"
+        && document.getElementById("outputMode") !== null
+        && document.getElementById("previewFrame")?.contentDocument?.readyState === "complete"`),
+      "Mode Studio visibility initialization"
+    );
+
     for (const mode of modeIds) {
+      await cdp.evaluate(`(() => {
+        const select = document.getElementById("outputMode");
+        select.value = ${JSON.stringify(mode)};
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`);
+      await waitFor(
+        () => cdp.evaluate(`(async () => {
+          const saved = await PepsSponsor.loadStateAuthoritative();
+          const currentUrl = new URL(document.getElementById("currentModeUrl").value);
+          const preview = document.getElementById("previewFrame")?.contentWindow;
+          return saved.mode === ${JSON.stringify(mode)}
+            && saved.modeGroups[${JSON.stringify(mode)}] === "group_capacity"
+            && document.getElementById("outputMode").value === ${JSON.stringify(mode)}
+            && currentUrl.searchParams.get("mode") === ${JSON.stringify(mode)}
+            && currentUrl.searchParams.get("group") === "group_capacity"
+            && preview?.location?.pathname.endsWith("/sponsor-display.html")
+            && new URL(preview.location.href).searchParams.get("mode") === ${JSON.stringify(mode)}
+            && new URL(preview.location.href).searchParams.get("group") === "group_capacity";
+        })()`),
+        `${mode} Mode Studio selection, persistence, URL, and preview route`
+      );
+      const previewVisibility = await waitForModeVisible(cdp, mode, {
+        frameSelector: "#previewFrame",
+        groupId: "group_capacity"
+      });
+      assert(
+        previewVisibility.viewport.width === 1920 && previewVisibility.viewport.height === 1080,
+        `${mode} Mode Studio preview must render at 1920x1080: ${JSON.stringify(previewVisibility.viewport)}`
+      );
+    }
+    assertNoBrowserErrors(cdp, routeMarker, "Mode Studio selection and preview visibility");
+
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 1280,
+      height: 720,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    try {
+      for (const mode of modeIds) {
+        await navigate(
+          cdp,
+          origin,
+          `/sponsor.html?mode=${encodeURIComponent(mode)}&group=group_capacity&qa=explicit-visible`,
+          (location) => location.pathname.endsWith("/sponsor-display.html")
+            && new URL(location.href).searchParams.get("mode") === mode,
+          `${mode} explicit compatibility route`
+        );
+        const visibility = await waitForModeVisible(cdp, mode, { groupId: "group_capacity" });
+        assert(
+          visibility.viewport.width === 1280 && visibility.viewport.height === 720,
+          `${mode} explicit output must use the 1280x720 OBS fixture`
+        );
+        const explicit = await cdp.evaluate(`({
+          mode: new URL(location.href).searchParams.get("mode"),
+          group: new URL(location.href).searchParams.get("group"),
+          qa: new URL(location.href).searchParams.get("qa"),
+          renderer: document.getElementById("sponsorLayer").dataset.renderer,
+          renderedGroup: document.getElementById("displayStage").dataset.group
+        })`);
+        assert(explicit.mode === mode, `${mode} route changed the explicit mode`);
+        assert(explicit.group === "group_capacity", `${mode} route changed the explicit group`);
+        assert(explicit.qa === "explicit-visible", `${mode} route lost an unrelated query parameter`);
+        assert(explicit.renderer === mode, `${mode} rendered as ${explicit.renderer}`);
+        assert(explicit.renderedGroup === "group_capacity", `${mode} used the wrong group`);
+        if (MODE_MOTION_SELECTORS[mode]) await assertModeMotion(cdp, mode);
+        if (MODE_CYCLE_MODES.has(mode)) await assertModeCycle(cdp, mode);
+      }
+
+      for (const resizedMode of ["ticker", "orbit", "cover3d"]) {
+        await cdp.send("Emulation.setDeviceMetricsOverride", {
+          width: 1920,
+          height: 1080,
+          deviceScaleFactor: 1,
+          mobile: false
+        });
+        await navigate(
+          cdp,
+          origin,
+          `/sponsor.html?mode=${encodeURIComponent(resizedMode)}&group=group_capacity&qa=resize-reflow`,
+          (location) => location.pathname.endsWith("/sponsor-display.html")
+            && new URL(location.href).searchParams.get("mode") === resizedMode,
+          `${resizedMode} pre-resize output`
+        );
+        await waitForModeVisible(cdp, resizedMode, { groupId: "group_capacity" });
+        await cdp.evaluate(`document.querySelector("#sponsorLayer > .psm-host").dataset.qaBeforeResize = "1"`);
+        await cdp.send("Emulation.setDeviceMetricsOverride", {
+          width: 640,
+          height: 360,
+          deviceScaleFactor: 1,
+          mobile: false
+        });
+        await waitFor(
+          () => cdp.evaluate(`innerWidth === 640
+            && innerHeight === 360
+            && document.querySelector("#sponsorLayer > .psm-host")?.dataset.qaBeforeResize !== "1"`),
+          `${resizedMode} renderer refresh after in-place resize`
+        );
+        const resizedVisibility = await waitForModeVisible(cdp, resizedMode, {
+          groupId: "group_capacity"
+        });
+        assert(
+          resizedVisibility.viewport.width === 640
+            && resizedVisibility.viewport.height === 360
+            && resizedVisibility.visibleCount > 0,
+          `${resizedMode} must reflow after an in-place OBS viewport resize: ${JSON.stringify(resizedVisibility)}`
+        );
+      }
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 720,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+
+      for (const [legacyMode, canonicalMode] of [
+        ["bottom_bar", "lower_third"],
+        ["fullscreen_break", "sponsor_break"]
+      ]) {
+        await navigate(
+          cdp,
+          origin,
+          `/sponsor.html?mode=${legacyMode}&group=group_capacity&qa=legacy-alias`,
+          (location) => location.pathname.endsWith("/sponsor-display.html")
+            && new URL(location.href).searchParams.get("mode") === legacyMode,
+          `${legacyMode} legacy display alias`
+        );
+        await waitForModeVisible(cdp, canonicalMode, { groupId: "group_capacity" });
+        assert(
+          await cdp.evaluate(
+            `document.getElementById("sponsorLayer").dataset.renderer === ${JSON.stringify(canonicalMode)}`
+          ),
+          `${legacyMode} must render through ${canonicalMode}`
+        );
+      }
+
+      await cdp.evaluate(`(async () => {
+        const base = await PepsSponsor.loadStateAuthoritative();
+        const next = PepsSponsor.clone(base);
+        next.activePlaylist = "pl_capacity_live";
+        next.isVisible = true;
+        next.isPaused = true;
+        next.settings.autoPlay = false;
+        next.playlists = next.playlists.map((playlist) => playlist.id === "pl_capacity_live"
+          ? {
+              ...playlist,
+              mode: "rain",
+              groupId: "group_capacity",
+              sponsorIds: ["cap_a", "cap_b", "cap_c", "cap_d", "cap_e"]
+            }
+          : playlist);
+        await PepsSponsor.saveStateLocked(next, { base, silent: true });
+      })()`);
       await navigate(
         cdp,
         origin,
-        `/sponsor.html?mode=${encodeURIComponent(mode)}&group=group_alpha&qa=explicit`,
+        "/sponsor.html?mode=live&qa=paused-rain-visible",
         (location) => location.pathname.endsWith("/sponsor-display.html")
-          && new URL(location.href).searchParams.get("mode") === mode,
-        `${mode} explicit compatibility route`
+          && new URL(location.href).searchParams.get("mode") === "live",
+        "paused Logo Rain output"
       );
-      await waitForDisplay(cdp, mode, "group_alpha", "Alpha Sponsor");
-      const explicit = await cdp.evaluate(`({
-        mode: new URL(location.href).searchParams.get("mode"),
-        group: new URL(location.href).searchParams.get("group"),
-        qa: new URL(location.href).searchParams.get("qa"),
-        renderer: document.getElementById("sponsorLayer").dataset.renderer,
-        renderedGroup: document.getElementById("displayStage").dataset.group
-      })`);
-      assert(explicit.mode === mode, `${mode} route changed the explicit mode`);
-      assert(explicit.group === "group_alpha", `${mode} route changed the explicit group`);
-      assert(explicit.qa === "explicit", `${mode} route lost an unrelated query parameter`);
-      assert(explicit.renderer === mode, `${mode} rendered as ${explicit.renderer}`);
-      assert(explicit.renderedGroup === "group_alpha", `${mode} used the wrong group`);
+      await waitForModeVisible(cdp, "rain", { groupId: "group_capacity" });
+      assert(
+        await cdp.evaluate(`document.querySelector("#sponsorLayer > .psm-host")?.classList.contains("psm-paused") === true`),
+        "Paused Logo Rain regression must exercise the paused renderer"
+      );
+
+      for (const pausedMode of ["grid", "bounce", "lower_third", "goal_popup"]) {
+        await cdp.evaluate(`(async () => {
+          const base = await PepsSponsor.loadStateAuthoritative();
+          const next = PepsSponsor.clone(base);
+          next.isPaused = true;
+          next.settings.autoPlay = false;
+          next.playlists = next.playlists.map((playlist) => playlist.id === "pl_capacity_live"
+            ? { ...playlist, mode: ${JSON.stringify(pausedMode)} }
+            : playlist);
+          await PepsSponsor.saveStateLocked(next, { base, silent: true });
+        })()`);
+        await navigate(
+          cdp,
+          origin,
+          `/sponsor.html?mode=live&qa=paused-${encodeURIComponent(pausedMode)}-visible`,
+          (location) => location.pathname.endsWith("/sponsor-display.html")
+            && new URL(location.href).searchParams.get("mode") === "live",
+          `paused ${pausedMode} output`
+        );
+        await waitForModeVisible(cdp, pausedMode, { groupId: "group_capacity" });
+        assert(
+          await cdp.evaluate(`document.querySelector("#sponsorLayer > .psm-host")?.classList.contains("psm-paused") === true`),
+          `Paused ${pausedMode} regression must exercise the paused renderer`
+        );
+        if (pausedMode === "bounce") {
+          const pausedBounceTransforms = await cdp.evaluate(`[
+            ...document.querySelectorAll("#sponsorLayer .psm-bounce img.psm-logo")
+          ].map((image) => image.style.transform)`);
+          assert(
+            pausedBounceTransforms.length >= 3
+              && pausedBounceTransforms.every(Boolean)
+              && new Set(pausedBounceTransforms).size >= 3,
+            `Paused Bounce logos must retain distinct initialized positions: ${JSON.stringify(pausedBounceTransforms)}`
+          );
+        }
+      }
+
+      await seedCapacityProject(cdp);
+      await cdp.evaluate(`(async () => {
+        const base = await PepsSponsor.loadStateAuthoritative();
+        const next = PepsSponsor.clone(base);
+        next.modeSettings.orbit = {
+          ...next.modeSettings.orbit,
+          size: 800,
+          orbitRadius: 520,
+          posX: "right",
+          posY: "bottom"
+        };
+        await PepsSponsor.saveStateLocked(next, { base, silent: true });
+      })()`);
+      await navigate(
+        cdp,
+        origin,
+        "/sponsor.html?mode=orbit&group=group_capacity&qa=extreme-orbit-visible",
+        (location) => location.pathname.endsWith("/sponsor-display.html")
+          && new URL(location.href).searchParams.get("mode") === "orbit",
+        "extreme Orbit radius and logo-size output"
+      );
+      const extremeOrbit = await waitForModeVisible(cdp, "orbit", { groupId: "group_capacity" });
+      const extremeOrbitLayout = await cdp.evaluate(`(() => {
+        const items = [...document.querySelectorAll("#sponsorLayer .psm-orbit-item")];
+        const centers = items.map((item) => {
+          const rect = item.querySelector("img").getBoundingClientRect();
+          return (Math.round((rect.left + rect.right) / 10) * 5)
+            + ","
+            + (Math.round((rect.top + rect.bottom) / 10) * 5);
+        });
+        return {
+          transforms: items.map((item) => item.style.transform),
+          uniqueCenters: new Set(centers).size,
+          widths: items.map((item) => Math.round(item.querySelector("img").getBoundingClientRect().width))
+        };
+      })()`);
+      assert(
+        extremeOrbit.visibleCount > 0
+          && new Set(extremeOrbitLayout.transforms).size === 5
+          && extremeOrbitLayout.transforms.every((transform) => !transform.includes("translateX(0px)"))
+          && extremeOrbitLayout.uniqueCenters >= 3
+          && extremeOrbitLayout.widths.every((width) => width > 0 && width < 800),
+        `Extreme Orbit settings must retain a visible non-collapsed orbit: ${JSON.stringify({
+          visibility: extremeOrbit,
+          layout: extremeOrbitLayout
+        })}`
+      );
+
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 320,
+        height: 180,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      await navigate(
+        cdp,
+        origin,
+        "/sponsor.html?mode=cover3d&group=group_capacity&qa=compact-cover-visible",
+        (location) => location.pathname.endsWith("/sponsor-display.html")
+          && new URL(location.href).searchParams.get("mode") === "cover3d",
+        "compact Cover3D output"
+      );
+      const compactCover = await waitForModeVisible(cdp, "cover3d", {
+        groupId: "group_capacity"
+      });
+      assert(
+        compactCover.viewport.width === 320
+          && compactCover.viewport.height === 180
+          && compactCover.visibleCount > 0,
+        `Cover3D must retain a genuinely visible loaded logo at 320x180: ${JSON.stringify(compactCover)}`
+      );
+
+      await seedCapacityProject(cdp);
+      await cdp.evaluate(`(async () => {
+        const bytes = new Uint8Array([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+          0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52
+        ]);
+        await PepsSponsor.dbPutImage(
+          "cap_e",
+          new Blob([bytes], { type: "image/png" }),
+          { name: "cap_e-corrupt.png", type: "image/png" }
+        );
+        const base = await PepsSponsor.loadStateAuthoritative();
+        const next = PepsSponsor.clone(base);
+        next.currentIndex = 0;
+        next.settings.autoPlay = false;
+        await PepsSponsor.saveStateLocked(next, { base, silent: true });
+        window.__qaPlaybackMessages.length = 0;
+      })()`);
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 720,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      await navigate(
+        cdp,
+        origin,
+        "/sponsor.html?mode=live&qa=partial-corrupt-index",
+        (location) => location.pathname.endsWith("/sponsor-display.html")
+          && new URL(location.href).searchParams.get("mode") === "live",
+        "partially corrupt managed output"
+      );
+      const partialCorruptVisibility = await waitForModeVisible(cdp, "lower_third", {
+        groupId: "group_capacity"
+      });
+      await waitFor(
+        () => cdp.evaluate(`window.__qaPlaybackMessages.some((message) =>
+          message.sponsorId === "cap_c" && message.currentIndex === 1
+        )`),
+        "playback identity after skipping a corrupt Sponsor"
+      );
+      const partialCorruptPlayback = await cdp.evaluate(`(() => {
+        const messages = window.__qaPlaybackMessages;
+        const latest = [...messages].reverse().find((message) => message.mode === "lower_third");
+        return { latest };
+      })()`);
+      const visibleCapacityC = partialCorruptVisibility.images.find((image) => image.name === "Capacity C");
+      const corruptCapacityE = partialCorruptVisibility.images.find((image) => image.name === "Capacity E");
+      assert(
+        partialCorruptVisibility.visibleCount > 0
+          && visibleCapacityC?.visible === true
+          && (!corruptCapacityE || corruptCapacityE.visible === false),
+        `A corrupt Sponsor must be skipped without hiding valid Sponsors: ${JSON.stringify(partialCorruptVisibility)}`
+      );
+      assert(
+        partialCorruptPlayback.latest?.sponsorId === "cap_c"
+          && partialCorruptPlayback.latest?.sponsorName === "Capacity C"
+          && partialCorruptPlayback.latest?.currentIndex === 1,
+        `Playback identity must match the first rendered valid Sponsor: ${JSON.stringify(partialCorruptPlayback)}`
+      );
+
+      const corruptFixture = await cdp.evaluate(`(async () => {
+        await PepsSponsor.dbClearImages();
+        const bytes = new Uint8Array([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+          0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52
+        ]);
+        await PepsSponsor.dbPutImage(
+          "img_corrupt",
+          new Blob([bytes], { type: "image/png" }),
+          { name: "corrupt.png", type: "image/png" }
+        );
+        const state = PepsSponsor.defaultState();
+        const createdAt = "2026-08-01T00:00:00.000Z";
+        state.projectName = "Corrupt Preview Image Regression";
+        state.mode = "grid";
+        state.activeGroupId = "group_corrupt";
+        state.images = [{
+          id: "img_corrupt",
+          name: "Corrupt Sponsor",
+          tier: "partner",
+          duration: 6,
+          enabled: true,
+          createdAt
+        }];
+        state.groups = [
+          { id: "all", name: "All Corrupt Sponsors", imageIds: ["img_corrupt"] },
+          { id: "group_corrupt", name: "Corrupt Group", imageIds: ["img_corrupt"] }
+        ];
+        state.modeGroups = Object.fromEntries(
+          PepsSponsorModes.ids.map((mode) => [mode, "group_corrupt"])
+        );
+        state.modeSettings = Object.fromEntries(
+          PepsSponsorModes.ids.map((mode) => [mode, PepsSponsorModes.defaultsFor(mode)])
+        );
+        state.settings = {
+          autoPlay: false,
+          safeArea: false,
+          showNames: true,
+          showTier: true,
+          opacity: 100
+        };
+        state.isVisible = true;
+        state.isPaused = false;
+        const saved = await PepsSponsor.saveStateLocked(state, {
+          replace: true,
+          silent: true
+        });
+        const record = await PepsSponsor.dbGetImageRecord("img_corrupt");
+        return {
+          images: saved.images.length,
+          groupSponsors: PepsSponsor.getGroupSponsors(saved, saved.groups[1]).length,
+          blobBytes: record?.blob?.size || 0,
+          truthyUrl: await PepsSponsor.dbGetImageUrl("img_corrupt")
+        };
+      })()`);
+      assert(
+        corruptFixture.images === 1
+          && corruptFixture.groupSponsors === 1
+          && corruptFixture.blobBytes > 0
+          && corruptFixture.truthyUrl.startsWith("blob:"),
+        `Corrupt-image regression must start with one Sponsor and a truthy image URL: ${JSON.stringify(corruptFixture)}`
+      );
+
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 720,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      await navigate(
+        cdp,
+        origin,
+        "/sponsor-display.html?mode=grid&group=group_corrupt&preview=1&qa=corrupt-image-preview",
+        (location) => location.pathname.endsWith("/sponsor-display.html")
+          && new URL(location.href).searchParams.get("preview") === "1",
+        "corrupt image Preview diagnostic"
+      );
+      let missingImageDiagnostic = null;
+      await waitFor(async () => {
+        missingImageDiagnostic = await cdp.evaluate(`(() => {
+          const diagnostic = document.getElementById("emptyState");
+          const rect = diagnostic.getBoundingClientRect();
+          let clipped = {
+            left: Math.max(0, rect.left),
+            top: Math.max(0, rect.top),
+            right: Math.min(innerWidth, rect.right),
+            bottom: Math.min(innerHeight, rect.bottom)
+          };
+          let effectiveOpacity = 1;
+          let cssVisible = true;
+          let node = diagnostic;
+          while (node && node.nodeType === Node.ELEMENT_NODE) {
+            const style = getComputedStyle(node);
+            const opacity = Number.parseFloat(style.opacity);
+            effectiveOpacity *= Number.isFinite(opacity) ? opacity : 1;
+            if (
+              style.display === "none"
+              || style.visibility === "hidden"
+              || style.visibility === "collapse"
+              || style.contentVisibility === "hidden"
+            ) {
+              cssVisible = false;
+            }
+            if (node !== diagnostic) {
+              const bounds = node.getBoundingClientRect();
+              if (["hidden", "clip", "scroll", "auto"].includes(style.overflowX)) {
+                clipped.left = Math.max(clipped.left, bounds.left);
+                clipped.right = Math.min(clipped.right, bounds.right);
+              }
+              if (["hidden", "clip", "scroll", "auto"].includes(style.overflowY)) {
+                clipped.top = Math.max(clipped.top, bounds.top);
+                clipped.bottom = Math.min(clipped.bottom, bounds.bottom);
+              }
+            }
+            node = node.parentElement;
+          }
+          const visibleArea = Math.max(0, clipped.right - clipped.left)
+            * Math.max(0, clipped.bottom - clipped.top);
+          const originalArea = Math.max(0, rect.width * rect.height);
+          const state = PepsSponsor.loadState();
+          return {
+            preview: new URL(location.href).searchParams.get("preview"),
+            shown: diagnostic.classList.contains("show"),
+            cssVisible,
+            effectiveOpacity,
+            visibleArea,
+            visibleFraction: originalArea > 0 ? visibleArea / originalArea : 0,
+            title: document.getElementById("emptyStateTitle").textContent.trim(),
+            text: document.getElementById("emptyStateText").textContent.trim(),
+            sponsorCount: PepsSponsor.getGroupSponsors(
+              state,
+              state.groups.find((group) => group.id === "group_corrupt")
+            ).length
+          };
+        })()`);
+        return missingImageDiagnostic.preview === "1"
+          && missingImageDiagnostic.sponsorCount === 1
+          && missingImageDiagnostic.shown
+          && missingImageDiagnostic.cssVisible
+          && missingImageDiagnostic.effectiveOpacity >= 0.1
+          && missingImageDiagnostic.visibleArea >= 1024
+          && missingImageDiagnostic.visibleFraction >= 0.25
+          && missingImageDiagnostic.title.includes("Sponsor")
+          && missingImageDiagnostic.text.length > 0;
+      }, "visible missing-image Preview diagnostic", 5000);
+      const corruptVisibility = await readModeVisibility(cdp, "grid", {
+        groupId: "group_corrupt"
+      });
+      assert(
+        corruptVisibility.visibleCount === 0
+          && corruptVisibility.images.every((image) => !image.visible),
+        `A broken logo must never count as visible: ${JSON.stringify({
+          diagnostic: missingImageDiagnostic,
+          visibility: corruptVisibility
+        })}`
+      );
+    } finally {
+      await cdp.send("Emulation.clearDeviceMetricsOverride");
     }
-    assertNoBrowserErrors(cdp, routeMarker, "Compatibility and explicit-mode routes");
+    assertNoBrowserErrors(cdp, routeMarker, "Compatibility and visible explicit-mode routes");
 
     const capacityMarker = cdp.events.length;
     const capacityProject = await seedCapacityProject(cdp);
@@ -2495,10 +3804,33 @@ async function main() {
       (location) => location.pathname.endsWith("/sponsor-control.html"),
       "BFCache control route"
     );
+    let stablePreviewHref = "";
+    let stablePreviewPolls = 0;
     await waitFor(
-      () => cacheControl.cdp.evaluate(`document.readyState === "complete"
-        && document.getElementById("projectName") !== null
-        && document.getElementById("previewFrame")?.contentDocument?.readyState === "complete"`),
+      async () => {
+        const snapshot = await cacheControl.cdp.evaluate(`(() => {
+          const frame = document.getElementById("previewFrame");
+          return {
+            controlReady: document.readyState === "complete"
+              && document.getElementById("projectName") !== null,
+            frameReady: frame?.contentDocument?.readyState === "complete",
+            href: frame?.contentWindow?.location?.href || "",
+            pathname: frame?.contentWindow?.location?.pathname || ""
+          };
+        })()`);
+        if (!snapshot.controlReady || !snapshot.frameReady
+          || !snapshot.pathname.endsWith("/sponsor-display.html")) {
+          stablePreviewHref = "";
+          stablePreviewPolls = 0;
+          return false;
+        }
+        if (snapshot.href === stablePreviewHref) stablePreviewPolls += 1;
+        else {
+          stablePreviewHref = snapshot.href;
+          stablePreviewPolls = 1;
+        }
+        return stablePreviewPolls >= 3;
+      },
       "BFCache control initialization"
     );
     await cacheControl.cdp.evaluate(`(() => {
@@ -2678,6 +4010,12 @@ async function main() {
       + `capacity playback, import/export, sample rollback, multi-tab locking, BFCache lifecycle, `
       + `fake OBS, transparency, rapid switching).`
     );
+  } catch (error) {
+    const diagnostic = chromeStderr.trim();
+    if (diagnostic) {
+      error.message = `${error.message}\nChrome stderr:\n${diagnostic}`;
+    }
+    throw error;
   } finally {
     for (const page of extraPages) {
       try {
@@ -2687,24 +4025,42 @@ async function main() {
       }
     }
     if (socket) socket.close();
-    if (child.exitCode === null && process.platform === "win32") {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-    } else if (child.exitCode === null) {
-      child.kill("SIGTERM");
+    if (child) {
+      const childIsRunning = () => child.exitCode === null && child.signalCode === null;
+      if (childIsRunning() && process.platform === "win32") {
+        spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+      } else if (childIsRunning()) {
+        child.kill("SIGTERM");
+      }
+      if (childIsRunning()) {
+        await Promise.race([
+          new Promise((resolve) => child.once("exit", resolve)),
+          wait(3000)
+        ]);
+      }
+      if (childIsRunning()) {
+        child.kill("SIGKILL");
+        await Promise.race([
+          new Promise((resolve) => child.once("exit", resolve)),
+          wait(2000)
+        ]);
+      }
+      child.stderr?.destroy();
+      child.unref();
     }
-    if (child.exitCode === null) {
-      await Promise.race([
-        new Promise((resolve) => child.once("exit", resolve)),
-        wait(3000)
-      ]);
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (profile) {
+      try {
+        fs.rmSync(profile, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 250
+        });
+      } catch (cleanupError) {
+        console.warn(`Warning: unable to remove temporary Chrome profile ${profile}: ${cleanupError.message}`);
+      }
     }
-    await new Promise((resolve) => server.close(resolve));
-    fs.rmSync(profile, {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 100
-    });
   }
 }
 
