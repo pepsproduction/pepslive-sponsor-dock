@@ -328,6 +328,13 @@
     toggle("showTier", "แสดงระดับ Sponsor", true, { group: "broadcast" })
   ];
 
+  const logoFrameCommon = [
+    ...redesignedCommon.filter((control) => !["showNames", "showTier"].includes(control.key)),
+    toggle("showLogoFrame", "แสดงกรอบพร้อมข้อมูล Sponsor", false, { group: "broadcast" }),
+    toggle("showNames", "แสดงชื่อเมื่อเปิดกรอบ", true, { group: "broadcast" }),
+    toggle("showTier", "แสดงระดับเมื่อเปิดกรอบ", true, { group: "broadcast" })
+  ];
+
   const redesignedDefinitions = [
     {
       id: "lower_third",
@@ -343,10 +350,11 @@
         shadow: "soft",
         showNames: true,
         showTier: true,
+        showLogoFrame: false,
         position: "bottom",
         maxVisible: 6
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         select(
           "position",
@@ -371,9 +379,10 @@
         shadow: "soft",
         showNames: true,
         showTier: true,
+        showLogoFrame: false,
         position: "right"
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         select(
           "position",
@@ -405,10 +414,11 @@
         shadow: "soft",
         showNames: true,
         showTier: true,
+        showLogoFrame: false,
         position: "right",
         maxVisible: 5
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         select(
           "position",
@@ -438,10 +448,11 @@
         shadow: "soft",
         showNames: true,
         showTier: true,
+        showLogoFrame: false,
         position: "bottom",
         speed: 18
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         select("position", "ตำแหน่ง", [["bottom", "ด้านล่าง"], ["top", "ด้านบน"]], "bottom"),
         range("speed", "ระยะเวลาวิ่งครบหนึ่งรอบ", 4, 60, 1, 18, " วินาที")
@@ -461,11 +472,12 @@
         shadow: "soft",
         showNames: true,
         showTier: true,
+        showLogoFrame: false,
         position: "center",
         maxVisible: 8,
         boardTitle: "OUR PARTNERS"
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         range("maxVisible", "จำนวนที่แสดงพร้อมกัน", 2, 12, 1, 8, " โลโก้"),
         text("boardTitle", "หัวข้อบนบอร์ด", "OUR PARTNERS")
@@ -485,12 +497,13 @@
         shadow: "strong",
         showNames: true,
         showTier: false,
+        showLogoFrame: false,
         position: "center",
         maxVisible: 8,
         breakKicker: "PEPSLIVE PARTNERS",
         breakTitle: "Presented By"
       },
-      commonControls: redesignedCommon,
+      commonControls: logoFrameCommon,
       controls: [
         range("maxVisible", "จำนวนที่แสดงพร้อมกัน", 2, 12, 1, 8, " โลโก้"),
         text("breakKicker", "ข้อความด้านบน", "PEPSLIVE PARTNERS"),

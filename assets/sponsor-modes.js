@@ -226,6 +226,8 @@
         align-items: center;
         gap: 12px;
         min-width: 0;
+      }
+      .psm-tile.psm-framed {
         padding: 10px 14px;
         border: 1px solid rgba(255, 255, 255, .14);
         border-radius: max(12px, var(--psm-radius));
@@ -235,7 +237,8 @@
         box-shadow: var(--psm-panel-shadow);
         backdrop-filter: blur(18px);
       }
-      .psm-tile.psm-only-logo { justify-content: center; padding: 10px; }
+      .psm-tile.psm-only-logo { justify-content: center; }
+      .psm-tile.psm-framed.psm-only-logo { padding: 10px; }
       .psm-tile-copy { min-width: 0; line-height: 1.15; }
       .psm-tile-copy strong {
         display: block;
@@ -328,7 +331,7 @@
         backdrop-filter: blur(18px);
       }
       .psm-broadcast-ticker.psm-top { top: 28px; bottom: auto; }
-      .psm-broadcast-ticker .psm-tile {
+      .psm-broadcast-ticker .psm-tile.psm-framed {
         padding-top: 7px;
         padding-bottom: 7px;
         background: rgba(255, 255, 255, .045);
@@ -610,8 +613,14 @@
   }
 
   function createTile(entry, settings, options = {}) {
-    const showNames = settings.showNames !== false && options.onlyLogo !== true;
-    const tile = createElement("article", `psm-tile${showNames ? "" : " psm-only-logo"}`);
+    const showFrame = settings.showLogoFrame === true;
+    const showNames = showFrame && settings.showNames !== false && options.onlyLogo !== true;
+    const tile = createElement(
+      "article",
+      `psm-tile${showFrame ? " psm-framed" : ""}${
+        showNames ? "" : " psm-only-logo"
+      }`
+    );
     tile.appendChild(createLogo(entry, settings));
     if (showNames) {
       const copy = createElement("span", "psm-tile-copy");

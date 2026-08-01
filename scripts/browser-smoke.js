@@ -501,6 +501,16 @@ const MODE_MOTION_SELECTORS = Object.freeze({
 
 const MODE_CYCLE_MODES = new Set(["rotator", "cover3d", "spotlight"]);
 
+const LOGO_FRAME_MODE_IDS = Object.freeze([
+  "lower_third",
+  "corner_badge",
+  "side_tower",
+  "broadcast_ticker",
+  "grid_board",
+  "sponsor_break"
+]);
+const LOGO_FRAME_MODES = new Set(LOGO_FRAME_MODE_IDS);
+
 async function readModeVisibility(cdp, mode, options = {}) {
   const frameSelector = options.frameSelector || "";
   const expectedGroup = options.groupId || "";
@@ -764,6 +774,149 @@ async function assertModeCycle(cdp, mode) {
     after = await readModeCycleIdentity(cdp, mode);
     return !!after && after !== before;
   }, `${mode} timed Sponsor cycle`, 2500);
+}
+
+async function readLogoFrameSurface(cdp, options = {}) {
+  const frameSelector = options.frameSelector || "";
+  return cdp.evaluate(`(() => {
+    const frameSelector = ${JSON.stringify(frameSelector)};
+    const sourceDocument = frameSelector
+      ? document.querySelector(frameSelector)?.contentDocument
+      : document;
+    if (!sourceDocument) {
+      return { tileCount: 0, tiles: [], violations: [], missingDocument: true };
+    }
+    const view = sourceDocument.defaultView;
+    const colorHasAlpha = (value) => {
+      if (!value || value === "transparent") return false;
+      const components = value.match(/[\\d.]+/g)?.map(Number) || [];
+      return components.length < 4 || components[3] > 0.001;
+    };
+    const readVisibleSurface = (element, pseudo = null) => {
+      const style = view.getComputedStyle(element, pseudo);
+      const rendered = style.display !== "none"
+        && !["hidden", "collapse"].includes(style.visibility)
+        && (Number.parseFloat(style.opacity) || 0) > 0.001;
+      const borderVisible = ["Top", "Right", "Bottom", "Left"].some((side) =>
+        Number.parseFloat(style["border" + side + "Width"]) > 0
+          && !["none", "hidden"].includes(style["border" + side + "Style"])
+          && colorHasAlpha(style["border" + side + "Color"])
+      );
+      const backgroundVisible = style.backgroundImage !== "none"
+        || colorHasAlpha(style.backgroundColor);
+      const boxShadowVisible = style.boxShadow !== "none";
+      const backdropVisible = [style.backdropFilter, style.webkitBackdropFilter]
+        .filter(Boolean)
+        .some((value) => value !== "none");
+      const outlineVisible = Number.parseFloat(style.outlineWidth) > 0
+        && !["none", "hidden"].includes(style.outlineStyle)
+        && colorHasAlpha(style.outlineColor);
+      const generated = !pseudo || !["none", "normal"].includes(style.content);
+      return {
+        borderVisible,
+        backgroundVisible,
+        boxShadowVisible,
+        backdropVisible,
+        outlineVisible,
+        visibleSurface: rendered
+          && generated
+          && (borderVisible || backgroundVisible || boxShadowVisible || backdropVisible || outlineVisible)
+      };
+    };
+    const tiles = [...sourceDocument.querySelectorAll("#sponsorLayer .psm-tile")].map((tile) => {
+      const surface = readVisibleSurface(tile);
+      const before = readVisibleSurface(tile, "::before");
+      const after = readVisibleSurface(tile, "::after");
+      const framed = tile.classList.contains("psm-framed");
+      const copy = tile.querySelector(".psm-tile-copy");
+      const copyStyle = copy ? view.getComputedStyle(copy) : null;
+      const copyRect = copy?.getBoundingClientRect();
+      const hasVisibleCopy = !!copy
+        && !!copy.textContent.trim()
+        && copyStyle.display !== "none"
+        && !["hidden", "collapse"].includes(copyStyle.visibility)
+        && (Number.parseFloat(copyStyle.opacity) || 0) > 0.001
+        && copyRect.width > 0
+        && copyRect.height > 0;
+      return {
+        framed,
+        hasVisibleCopy,
+        visibleSurface: surface.visibleSurface || before.visibleSurface || after.visibleSurface,
+        surface,
+        before,
+        after
+      };
+    });
+    return {
+      tileCount: tiles.length,
+      tiles,
+      violations: tiles.filter((tile) => tile.framed || tile.visibleSurface || tile.hasVisibleCopy)
+    };
+  })()`);
+}
+
+async function readLogoSurfaceAudit(cdp, mode) {
+  return cdp.evaluate(`(() => {
+    const mode = ${JSON.stringify(mode)};
+    const allowedSceneBoundaries = {
+      broadcast_ticker: [".psm-broadcast-ticker"],
+      grid_board: [".psm-board-card"],
+      sponsor_break: [".psm-break-card"],
+      goal_popup: [".psm-goal-card"]
+    }[mode] || [];
+    const colorHasAlpha = (value) => {
+      if (!value || value === "transparent") return false;
+      const components = value.match(/[\\d.]+/g)?.map(Number) || [];
+      return components.length < 4 || components[3] > 0.001;
+    };
+    const hasVisibleSurface = (element, pseudo = null) => {
+      const style = getComputedStyle(element, pseudo);
+      const rendered = style.display !== "none"
+        && !["hidden", "collapse"].includes(style.visibility)
+        && (Number.parseFloat(style.opacity) || 0) > 0.001;
+      const generated = !pseudo || !["none", "normal"].includes(style.content);
+      const borderVisible = ["Top", "Right", "Bottom", "Left"].some((side) =>
+        Number.parseFloat(style["border" + side + "Width"]) > 0
+          && !["none", "hidden"].includes(style["border" + side + "Style"])
+          && colorHasAlpha(style["border" + side + "Color"])
+      );
+      const backgroundVisible = style.backgroundImage !== "none"
+        || colorHasAlpha(style.backgroundColor);
+      const outlineVisible = Number.parseFloat(style.outlineWidth) > 0
+        && !["none", "hidden"].includes(style.outlineStyle)
+        && colorHasAlpha(style.outlineColor);
+      const boxShadowVisible = style.boxShadow !== "none";
+      const backdropVisible = [style.backdropFilter, style.webkitBackdropFilter]
+        .filter(Boolean)
+        .some((value) => value !== "none");
+      return rendered
+        && generated
+        && (borderVisible || backgroundVisible || outlineVisible || boxShadowVisible || backdropVisible);
+    };
+    const describe = (element) => {
+      const id = element.id ? "#" + element.id : "";
+      const classes = [...element.classList].map((name) => "." + name).join("");
+      return element.tagName.toLowerCase() + id + classes;
+    };
+    const logos = [...document.querySelectorAll("#sponsorLayer img.psm-logo")];
+    const violations = [];
+    logos.forEach((logo, logoIndex) => {
+      let element = logo.parentElement;
+      while (element && !element.classList.contains("psm-host")) {
+        if (allowedSceneBoundaries.some((selector) => element.matches(selector))) break;
+        const sources = [
+          ["element", hasVisibleSurface(element)],
+          ["::before", hasVisibleSurface(element, "::before")],
+          ["::after", hasVisibleSurface(element, "::after")]
+        ].filter(([, visible]) => visible).map(([source]) => source);
+        if (sources.length) {
+          violations.push({ logoIndex, element: describe(element), sources });
+        }
+        element = element.parentElement;
+      }
+    });
+    return { logoCount: logos.length, violations };
+  })()`);
 }
 
 async function seedCanonicalProject(cdp) {
@@ -1068,17 +1221,37 @@ async function main() {
           .filter((control) => control.type === "text")
           .map((control) => ({ mode: definition.id, key: control.key, fallback: control.default }))
       );
+      const logoFrameModes = PepsSponsorModes.definitions
+        .filter((definition) => PepsSponsorModes.controlsFor(definition.id)
+          .some((control) => control.key === "showLogoFrame" && control.type === "toggle"))
+        .map((definition) => definition.id);
+      const legacyState = PepsSponsor.defaultState();
+      for (const mode of logoFrameModes) delete legacyState.modeSettings[mode].showLogoFrame;
+      const normalizedLegacyState = PepsSponsor.mergeState(legacyState);
       return {
         count: ids.length,
         unique: new Set(ids).size,
         definitions: PepsSponsorModes.definitions.length,
-        textControls
+        textControls,
+        logoFrameModes,
+        logoFrameDefaultsOff: logoFrameModes.every((mode) =>
+          PepsSponsorModes.defaultsFor(mode).showLogoFrame === false
+        ),
+        legacyLogoFramesOff: logoFrameModes.every((mode) =>
+          normalizedLegacyState.modeSettings[mode].showLogoFrame === false
+        )
       };
     })()`);
     assert(registry.count === 21, `Registry must expose 21 modes, found ${registry.count}`);
     assert(registry.unique === 21, "Registry mode IDs must be unique");
     assert(registry.definitions === 21, "Registry definitions and IDs must have equal length");
     assert(registry.textControls.length > 0, "Registry must expose text control schemas");
+    assert(
+      JSON.stringify([...registry.logoFrameModes].sort()) === JSON.stringify([...LOGO_FRAME_MODE_IDS].sort()),
+      `Logo-frame toggle must be scoped to the six tile modes: ${JSON.stringify(registry.logoFrameModes)}`
+    );
+    assert(registry.logoFrameDefaultsOff, "Logo frames must default to off in every supported mode");
+    assert(registry.legacyLogoFramesOff, "Legacy states without a logo-frame key must normalize to off");
 
     const seeded = await seedCanonicalProject(cdp);
     assert(
@@ -2689,6 +2862,60 @@ async function main() {
         frameSelector: "#previewFrame",
         groupId: "group_capacity"
       });
+      const logoFrameControl = await cdp.evaluate(`(() => {
+        const input = document.getElementById("modeControl_showLogoFrame");
+        return { exists: !!input, checked: input?.checked === true };
+      })()`);
+      if (LOGO_FRAME_MODES.has(mode)) {
+        assert(
+          logoFrameControl.exists && !logoFrameControl.checked,
+          `${mode} Mode Studio must expose a disabled-by-default logo-frame toggle: ${JSON.stringify(logoFrameControl)}`
+        );
+        const disabledPreviewFrame = await readLogoFrameSurface(cdp, { frameSelector: "#previewFrame" });
+        assert(
+          disabledPreviewFrame.tileCount > 0 && disabledPreviewFrame.violations.length === 0,
+          `${mode} preview must default to logo images only: ${JSON.stringify(disabledPreviewFrame)}`
+        );
+
+        await cdp.evaluate(`document.getElementById("modeControl_showLogoFrame").click()`);
+        await waitFor(
+          () => cdp.evaluate(`(async () => {
+            const saved = await PepsSponsor.loadStateAuthoritative();
+            return document.getElementById("modeControl_showLogoFrame")?.checked === true
+              && saved.modeSettings[${JSON.stringify(mode)}].showLogoFrame === true;
+          })()`),
+          `${mode} Mode Studio logo-card toggle persistence`
+        );
+        let enabledPreviewFrame = null;
+        await waitFor(async () => {
+          enabledPreviewFrame = await readLogoFrameSurface(cdp, { frameSelector: "#previewFrame" });
+          return enabledPreviewFrame.tileCount > 0
+            && enabledPreviewFrame.tiles.every((tile) =>
+              tile.framed && tile.visibleSurface && tile.hasVisibleCopy
+            );
+        }, `${mode} Mode Studio enabled logo-card preview`);
+
+        await cdp.evaluate(`document.getElementById("modeControl_showLogoFrame").click()`);
+        await waitFor(
+          () => cdp.evaluate(`(async () => {
+            const saved = await PepsSponsor.loadStateAuthoritative();
+            return document.getElementById("modeControl_showLogoFrame")?.checked === false
+              && saved.modeSettings[${JSON.stringify(mode)}].showLogoFrame === false;
+          })()`),
+          `${mode} Mode Studio logo-only toggle persistence`
+        );
+        let restoredPreviewFrame = null;
+        await waitFor(async () => {
+          restoredPreviewFrame = await readLogoFrameSurface(cdp, { frameSelector: "#previewFrame" });
+          return restoredPreviewFrame.tileCount > 0
+            && restoredPreviewFrame.violations.length === 0;
+        }, `${mode} Mode Studio restored logo-only preview`);
+      } else {
+        assert(
+          !logoFrameControl.exists,
+          `${mode} must not expose an irrelevant logo-frame toggle`
+        );
+      }
       assert(
         previewVisibility.viewport.width === 1920 && previewVisibility.viewport.height === 1080,
         `${mode} Mode Studio preview must render at 1920x1080: ${JSON.stringify(previewVisibility.viewport)}`
@@ -2729,6 +2956,26 @@ async function main() {
         assert(explicit.qa === "explicit-visible", `${mode} route lost an unrelated query parameter`);
         assert(explicit.renderer === mode, `${mode} rendered as ${explicit.renderer}`);
         assert(explicit.renderedGroup === "group_capacity", `${mode} used the wrong group`);
+        const logoSurfaceAudit = await readLogoSurfaceAudit(cdp, mode);
+        assert(
+          logoSurfaceAudit.logoCount > 0
+            && logoSurfaceAudit.violations.length === 0,
+          `${mode} must not render a CSS surface around individual logos: ${JSON.stringify(logoSurfaceAudit)}`
+        );
+        const logoFrameSurface = await readLogoFrameSurface(cdp);
+        if (LOGO_FRAME_MODES.has(mode)) {
+          assert(
+            logoFrameSurface.tileCount > 0
+              && logoFrameSurface.violations.length === 0
+              && logoFrameSurface.tiles.every((tile) => !tile.hasVisibleCopy),
+            `${mode} must render only logo images without a frame/background/copy by default: ${JSON.stringify(logoFrameSurface)}`
+          );
+        } else {
+          assert(
+            logoFrameSurface.tileCount === 0,
+            `${mode} unexpectedly rendered a logo-tile wrapper: ${JSON.stringify(logoFrameSurface)}`
+          );
+        }
         if (MODE_MOTION_SELECTORS[mode]) await assertModeMotion(cdp, mode);
         if (MODE_CYCLE_MODES.has(mode)) await assertModeCycle(cdp, mode);
       }
