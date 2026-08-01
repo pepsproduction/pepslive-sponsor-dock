@@ -34,13 +34,13 @@
         to { opacity: 1; transform: translateY(0) scale(1); }
       }
       @keyframes psmModeIn {
-        from { opacity: 0; transform: translateY(18px) scale(.97); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
+        from { opacity: 0; scale: .97; }
+        to { opacity: 1; scale: 1; }
       }
       @keyframes psmGoalIn {
-        0% { opacity: 0; transform: scale(.62) translateY(36px); filter: blur(14px); }
-        65% { opacity: 1; transform: scale(1.06) translateY(-4px); filter: blur(0); }
-        100% { transform: scale(1) translateY(0); }
+        0% { opacity: 0; scale: .62; filter: blur(14px); }
+        65% { opacity: 1; scale: 1.06; filter: blur(0); }
+        100% { scale: 1; filter: blur(0); }
       }
       @keyframes psmGoalFlare {
         0% { transform: translateX(-130%) skewX(-22deg); opacity: 0; }
@@ -57,7 +57,14 @@
         isolation: isolate;
       }
       .psm-host, .psm-host * { box-sizing: border-box; }
-      .psm-paused *, .psm-paused::before, .psm-paused::after {
+      .psm-paused .psm-ticker-track,
+      .psm-paused .psm-anim-pulse .psm-logo,
+      .psm-paused .psm-anim-spin .psm-logo,
+      .psm-paused .psm-anim-wiggle .psm-logo,
+      .psm-paused .psm-anim-float .psm-logo,
+      .psm-paused .psm-anim-swing .psm-logo,
+      .psm-paused .psm-wave .psm-logo,
+      .psm-paused .psm-orbit-ring {
         animation-play-state: paused !important;
       }
       .psm-logo {
@@ -143,10 +150,7 @@
       }
       .psm-cover {
         position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 50px;
-        height: 330px;
+        inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -459,6 +463,29 @@
     return output.slice(0, 2 * 1024 * 1024);
   }
 
+  function imageUrlLoads(url, isValid) {
+    return new Promise((resolve) => {
+      const probe = new Image();
+      let settled = false;
+      const finish = (loaded) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        probe.onload = null;
+        probe.onerror = null;
+        resolve(loaded && isValid());
+      };
+      const timeout = setTimeout(() => finish(false), 5000);
+      probe.onload = () => finish(probe.naturalWidth > 0 && probe.naturalHeight > 0);
+      probe.onerror = () => finish(false);
+      if (!isValid()) {
+        finish(false);
+        return;
+      }
+      probe.src = url;
+    });
+  }
+
   function normalizeIndex(index, length) {
     if (!length) return 0;
     return ((Math.trunc(Number(index) || 0) % length) + length) % length;
@@ -550,6 +577,7 @@
         }
         return {
           sponsor: sponsor || {},
+          sourceIndex: sponsorIndex,
           url,
           name: cleanText(sponsor?.name, `Sponsor ${sponsorIndex + 1}`),
           tier: cleanText(sponsor?.tierLabel || TIER_LABELS[sponsor?.tier] || sponsor?.tier || "")
@@ -557,13 +585,21 @@
       })
     );
     if (!isValid()) return [];
-    return entries.filter((entry) => entry?.url);
+    const candidates = entries.filter((entry) => entry?.url);
+    const loadable = await Promise.all(
+      candidates.map(async (entry) => (await imageUrlLoads(entry.url, isValid) ? entry : null))
+    );
+    if (!isValid()) return [];
+    return loadable.filter(Boolean);
   }
 
   function createLogo(entry, settings, className = "") {
     const logo = createElement("img", `psm-logo${className ? ` ${className}` : ""}`);
     logo.alt = entry.name;
     logo.draggable = false;
+    logo.addEventListener("error", () => {
+      logo.hidden = true;
+    }, { once: true });
     if (entry.url) logo.src = entry.url;
     const size = imageSize(settings);
     logo.style.width = `${size}px`;
@@ -625,6 +661,7 @@
     let frame = 0;
     let alive = true;
     let disposer = null;
+    let renderedEntries = [];
 
     const isValid = () => {
       if (!alive || activeRenderers.get(root) !== disposer) return false;
@@ -656,7 +693,9 @@
     const notifyIndexChange = (nextIndex) => {
       if (typeof context.onIndexChange !== "function" || !isValid()) return;
       try {
-        context.onIndexChange(normalizeIndex(nextIndex, sponsors.length));
+        const entryIndex = normalizeIndex(nextIndex, renderedEntries.length || sponsors.length);
+        const sourceIndex = renderedEntries[entryIndex]?.sourceIndex ?? entryIndex;
+        context.onIndexChange(normalizeIndex(sourceIndex, sponsors.length));
       } catch (error) {
         console.warn("Sponsor mode onIndexChange callback failed", error);
       }
@@ -688,9 +727,26 @@
       disposer();
       return disposer;
     }
-    if (!entries.length) return disposer;
+    if (!entries.length) {
+      if (typeof context.onEmpty === "function") {
+        try {
+          context.onEmpty({ reason: "unresolvable-images", sponsorCount: sponsors.length });
+        } catch (error) {
+          console.warn("Sponsor mode onEmpty callback failed", error);
+        }
+      }
+      return disposer;
+    }
 
-    const index = normalizeIndex(context.index ?? context.state?.currentIndex, entries.length);
+    renderedEntries = entries;
+    const requestedSourceIndex = normalizeIndex(
+      context.index ?? context.state?.currentIndex,
+      sponsors.length
+    );
+    const exactEntryIndex = entries.findIndex((entry) => entry.sourceIndex === requestedSourceIndex);
+    const nextEntryIndex = entries.findIndex((entry) => entry.sourceIndex > requestedSourceIndex);
+    const index = exactEntryIndex >= 0 ? exactEntryIndex : nextEntryIndex >= 0 ? nextEntryIndex : 0;
+    if (entries[index].sourceIndex !== requestedSourceIndex) notifyIndexChange(index);
     const classicRow = (extraClass = "") => {
       const row = createElement("div", `psm-classic-row${extraClass ? ` ${extraClass}` : ""}`);
       row.style.gap = `${number(settings.gap, 24, 0, 240)}px`;
@@ -765,7 +821,10 @@
           : number(settings.speed, 18, 1, 600);
       track.style.setProperty("--psm-ticker-duration", `${duration}s`);
       if (mode === "ticker") {
-        ticker.style.top = `${number(settings.tickerY, 900, 0, 4000)}px`;
+        const requestedY = number(settings.tickerY, 900, 0, 4000);
+        const hostHeight = host.clientHeight || root.clientHeight || window.innerHeight || 1080;
+        const maxVisibleY = Math.max(0, hostHeight - imageSize(settings));
+        ticker.style.top = `${Math.min(requestedY, maxVisibleY)}px`;
         if (settings.tickerX === "left") {
           ticker.style.left = "0";
           ticker.style.right = "auto";
@@ -796,46 +855,60 @@
         container.appendChild(element);
         return {
           element,
-          x: 30 + itemIndex * 95,
-          y: 30 + itemIndex * 60,
+          itemIndex,
+          initialized: false,
+          x: 0,
+          y: 0,
           dx: number(settings.bounceSpeed, 5, 1, 20) + (itemIndex % 3),
           dy: number(settings.bounceSpeed, 5, 1, 20) + (itemIndex % 2)
         };
       });
       host.appendChild(container);
+      const placeBounceItems = (factor = 0) => {
+        const width = container.clientWidth || root.clientWidth || 1920;
+        const height = container.clientHeight || root.clientHeight || 1080;
+        const minX = posX === "right" ? width * 0.5 : 0;
+        const maxX = posX === "left" ? width * 0.5 : width;
+        const minY = posY === "bottom" ? height * 0.5 : 0;
+        const maxY = posY === "top" ? height * 0.5 : height;
+        items.forEach((item) => {
+          const itemWidth = item.element.offsetWidth || imageSize(settings);
+          const itemHeight = item.element.offsetHeight || imageSize(settings);
+          if (!item.initialized) {
+            const spanX = Math.max(0, maxX - minX - itemWidth);
+            const spanY = Math.max(0, maxY - minY - itemHeight);
+            item.x = minX + spanX * ((item.itemIndex + 1) / (items.length + 1));
+            item.y = minY + spanY * ((item.itemIndex * 0.61803398875) % 1);
+            item.initialized = true;
+          } else if (factor > 0) {
+            item.x += item.dx * factor;
+            item.y += item.dy * factor;
+          }
+          if (item.x < minX) {
+            item.x = minX;
+            item.dx = Math.abs(item.dx);
+          } else if (item.x + itemWidth > maxX) {
+            item.x = Math.max(minX, maxX - itemWidth);
+            item.dx = -Math.abs(item.dx);
+          }
+          if (item.y < minY) {
+            item.y = minY;
+            item.dy = Math.abs(item.dy);
+          } else if (item.y + itemHeight > maxY) {
+            item.y = Math.max(minY, maxY - itemHeight);
+            item.dy = -Math.abs(item.dy);
+          }
+          item.element.style.transform = `translate3d(${item.x}px, ${item.y}px, 0)`;
+        });
+      };
+      placeBounceItems();
       if (!paused) {
         let previousTime = performance.now();
         const step = (time) => {
           if (!isValid()) return;
           const factor = Math.min(3, Math.max(0.25, (time - previousTime) / (1000 / 60)));
           previousTime = time;
-          const width = container.clientWidth || root.clientWidth || 1920;
-          const height = container.clientHeight || root.clientHeight || 1080;
-          const minX = posX === "right" ? width * 0.5 : 0;
-          const maxX = posX === "left" ? width * 0.5 : width;
-          const minY = posY === "bottom" ? height * 0.5 : 0;
-          const maxY = posY === "top" ? height * 0.5 : height;
-          items.forEach((item) => {
-            const itemWidth = item.element.offsetWidth || imageSize(settings);
-            const itemHeight = item.element.offsetHeight || imageSize(settings);
-            item.x += item.dx * factor;
-            item.y += item.dy * factor;
-            if (item.x < minX) {
-              item.x = minX;
-              item.dx = Math.abs(item.dx);
-            } else if (item.x + itemWidth > maxX) {
-              item.x = Math.max(minX, maxX - itemWidth);
-              item.dx = -Math.abs(item.dx);
-            }
-            if (item.y < minY) {
-              item.y = minY;
-              item.dy = Math.abs(item.dy);
-            } else if (item.y + itemHeight > maxY) {
-              item.y = Math.max(minY, maxY - itemHeight);
-              item.dy = -Math.abs(item.dy);
-            }
-            item.element.style.transform = `translate3d(${item.x}px, ${item.y}px, 0)`;
-          });
+          placeBounceItems(factor);
           frame = requestAnimationFrame(step);
         };
         frame = requestAnimationFrame(step);
@@ -866,8 +939,21 @@
           drop.style.setProperty("--psm-rain-duration", `${duration}s`);
           drop.style.setProperty("--psm-drift", `${Math.random() * 160 - 80}px`);
           drop.appendChild(createLogo(entry, settings));
+          if (paused) {
+            const logoSize = imageSize(settings);
+            const width = container.clientWidth || host.clientWidth || root.clientWidth || window.innerWidth;
+            const height = container.clientHeight || host.clientHeight || root.clientHeight || window.innerHeight;
+            const horizontalStart = posX === "left" ? 0 : posX === "right" ? 0.55 : 0.27;
+            const horizontalSpan = 0.4;
+            const left = (horizontalStart + Math.random() * horizontalSpan) * width;
+            drop.style.left = `${Math.min(Math.max(0, width - logoSize), left)}px`;
+            drop.style.top = `${Math.random() * Math.max(0, height - logoSize)}px`;
+            drop.style.animation = "none";
+            drop.style.opacity = "0.92";
+            drop.style.transform = `rotate(${Math.random() * 14 - 7}deg)`;
+          }
           container.appendChild(drop);
-          later(() => drop.remove(), duration * 1000 + 900);
+          if (!paused) later(() => drop.remove(), duration * 1000 + 900);
         }
       };
       spawn();
@@ -879,11 +965,16 @@
       const container = createElement("div", "psm-cover");
       const coverX = ["left", "center", "right"].includes(settings.posX) ? settings.posX : "center";
       const coverY = ["top", "center", "bottom"].includes(settings.posY) ? settings.posY : "bottom";
+      const logoSize = imageSize(settings);
+      const hostWidth = host.clientWidth || root.clientWidth || window.innerWidth || 1920;
+      const hostHeight = host.clientHeight || root.clientHeight || window.innerHeight || 1080;
+      const horizontalPadding = Math.min(50, Math.max(0, (hostWidth - logoSize) / 2));
+      const verticalPadding = Math.min(50, Math.max(0, (hostHeight - logoSize) / 2));
       container.style.justifyContent =
         coverX === "left" ? "flex-start" : coverX === "right" ? "flex-end" : "center";
-      container.style.top =
-        coverY === "top" ? "50px" : coverY === "center" ? "calc(50% - 165px)" : "auto";
-      container.style.bottom = coverY === "bottom" ? "50px" : "auto";
+      container.style.alignItems =
+        coverY === "top" ? "flex-start" : coverY === "bottom" ? "flex-end" : "center";
+      container.style.padding = `${verticalPadding}px ${horizontalPadding}px`;
       const cards = entries.map((entry) => {
         const card = createElement("div", "psm-cover-card");
         card.appendChild(createLogo(entry, settings));
@@ -950,23 +1041,42 @@
       const container = createElement("div", "psm-orbit");
       const orbitX = ["left", "center", "right"].includes(settings.posX) ? settings.posX : "center";
       const orbitY = ["top", "center", "bottom"].includes(settings.posY) ? settings.posY : "center";
+      const requestedRadius = number(settings.orbitRadius, 220, 20, 1000);
+      const requestedLogoSize = imageSize(settings);
+      const hostWidth = host.clientWidth || root.clientWidth || window.innerWidth || 1920;
+      const hostHeight = host.clientHeight || root.clientHeight || window.innerHeight || 1080;
+      const shortestSide = Math.min(hostWidth, hostHeight);
+      const logoSize = Math.min(requestedLogoSize, Math.max(24, shortestSide * 0.28));
+      const edgePadding = Math.min(50, Math.max(8, shortestSide * 0.05));
+      const maxVisibleRadius = Math.max(
+        0,
+        (shortestSide - logoSize - edgePadding * 2) / 2
+      );
+      const radius = Math.min(requestedRadius, maxVisibleRadius);
+      const anchorOffset = edgePadding + logoSize / 2 + radius;
       container.style.placeContent = `${
         orbitY === "top" ? "start" : orbitY === "bottom" ? "end" : "center"
       } ${
         orbitX === "left" ? "start" : orbitX === "right" ? "end" : "center"
       }`;
-      container.style.padding = "50px";
+      container.style.padding = `${edgePadding}px`;
+      if (orbitX === "left") container.style.paddingLeft = `${anchorOffset}px`;
+      if (orbitX === "right") container.style.paddingRight = `${anchorOffset}px`;
+      if (orbitY === "top") container.style.paddingTop = `${anchorOffset}px`;
+      if (orbitY === "bottom") container.style.paddingBottom = `${anchorOffset}px`;
       const ring = createElement(
         "div",
         `psm-orbit-ring${settings.orbitDir === "left" ? " psm-left" : ""}`
       );
       ring.style.setProperty("--psm-orbit-speed", `${number(settings.orbitSpeed, 7000, 100, 60000)}ms`);
-      const radius = number(settings.orbitRadius, 220, 20, 1000);
       entries.forEach((entry, entryIndex) => {
         const angle = (360 / entries.length) * entryIndex;
         const item = createElement("div", "psm-orbit-item");
         item.style.transform = `rotate(${angle}deg) translateX(${radius}px) rotate(${-angle}deg)`;
-        item.appendChild(createLogo(entry, settings));
+        const logo = createLogo(entry, settings);
+        logo.style.width = `${logoSize}px`;
+        logo.style.maxHeight = `${logoSize}px`;
+        item.appendChild(logo);
         ring.appendChild(item);
       });
       container.appendChild(ring);

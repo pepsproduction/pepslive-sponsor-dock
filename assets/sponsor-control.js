@@ -405,7 +405,10 @@
   function updatePreviewScale() {
     const frame = els.previewFrame.parentElement;
     if (!frame) return;
-    els.previewFrame.style.zoom = String(frame.clientWidth / 1920);
+    const scale = frame.clientWidth / 1920;
+    els.previewFrame.style.zoom = "";
+    els.previewFrame.style.transformOrigin = "top left";
+    els.previewFrame.style.transform = `scale(${scale})`;
   }
 
   function reloadPreview() {
@@ -1487,6 +1490,108 @@
     return false;
   }
 
+  function obsDisplayTarget(url) {
+    try {
+      const parsed = new URL(url || "", location.href);
+      const requestedMode = parsed.searchParams.get("mode") || "";
+      const mappedMode = Modes.mapRedesignMode(requestedMode);
+      const mode = Modes.has(requestedMode)
+        ? requestedMode
+        : Modes.has(mappedMode)
+          ? mappedMode
+          : requestedMode;
+      const group = parsed.searchParams.get("group") || "";
+      return mode ? `${encodeURIComponent(mode)}|${encodeURIComponent(group)}` : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function requireBrowserInput(input, sourceName) {
+    if (!input?.inputKind || input.inputKind === "browser_source") return;
+    const error = new Error(`Source "${sourceName}" exists but is not a Browser Source`);
+    error.code = "OBS_SOURCE_KIND_MISMATCH";
+    throw error;
+  }
+
+  async function preserveConflictingCanonicalSource({ input, sourceName, url }) {
+    const requestedTarget = obsDisplayTarget(url);
+    const existingTarget = obsDisplayTarget(input?.inputSettings?.url);
+    if (!requestedTarget || !existingTarget || requestedTarget === existingTarget) return input;
+
+    let parsed;
+    try {
+      parsed = new URL(input?.inputSettings?.url || "", location.href);
+    } catch {
+      parsed = null;
+    }
+    const requestedMode = parsed?.searchParams.get("mode") || "";
+    const mappedMode = Modes.mapRedesignMode(requestedMode);
+    const ownerMode = Modes.has(requestedMode)
+      ? requestedMode
+      : Modes.has(mappedMode)
+        ? mappedMode
+        : requestedMode;
+    const ownerGroup = parsed?.searchParams.get("group") || "";
+    const ownerName = ownerMode && ownerGroup ? fixedSourceName(ownerMode, ownerGroup) : "";
+    if (!ownerName || ownerName === sourceName) {
+      const error = new Error(`Source "${sourceName}" belongs to a different output URL and cannot be migrated safely`);
+      error.code = "OBS_SOURCE_TARGET_CONFLICT";
+      throw error;
+    }
+
+    let ownerAlreadyExists = false;
+    try {
+      await obs.call("GetInputSettings", { inputName: ownerName });
+      ownerAlreadyExists = true;
+    } catch {
+      // The collision-safe owner name is available.
+    }
+    if (ownerAlreadyExists) {
+      const error = new Error(`Both "${sourceName}" and "${ownerName}" already exist in OBS`);
+      error.code = "OBS_SOURCE_TARGET_CONFLICT";
+      throw error;
+    }
+    await obs.call("SetInputName", { inputName: sourceName, newInputName: ownerName });
+    return null;
+  }
+
+  async function migrateLegacyObsSource({ url, sourceName, legacySourceNames = [] }) {
+    const requestedTarget = obsDisplayTarget(url);
+    if (!requestedTarget) return null;
+    const knownNames = [...new Set(legacySourceNames.filter(Boolean))];
+
+    for (const legacyName of knownNames) {
+      try {
+        const legacyInput = await obs.call("GetInputSettings", { inputName: legacyName });
+        requireBrowserInput(legacyInput, legacyName);
+        if (obsDisplayTarget(legacyInput.inputSettings?.url) !== requestedTarget) continue;
+        await obs.call("SetInputName", { inputName: legacyName, newInputName: sourceName });
+        return legacyInput;
+      } catch (error) {
+        if (error.code === "OBS_SOURCE_KIND_MISMATCH") throw error;
+      }
+    }
+
+    if (!knownNames.length) return null;
+    try {
+      const list = await obs.call("GetInputList", { inputKind: "browser_source" });
+      for (const candidate of list.inputs || []) {
+        if (!candidate.inputName?.startsWith("PepsLive Sponsor Dock -")
+          && !candidate.inputName?.startsWith("PEPS_SPONSOR_")) continue;
+        const candidateInput = await obs.call("GetInputSettings", { inputName: candidate.inputName });
+        requireBrowserInput(candidateInput, candidate.inputName);
+        if (obsDisplayTarget(candidateInput.inputSettings?.url) !== requestedTarget) continue;
+        await obs.call("SetInputName", { inputName: candidate.inputName, newInputName: sourceName });
+        return candidateInput;
+      }
+    } catch (error) {
+      if (error.code === "OBS_SOURCE_KIND_MISMATCH") throw error;
+      // Older OBS versions may not expose GetInputList. Exact-name migration still works.
+    }
+    return null;
+  }
+
   async function ensureObsSource({ url, sourceName, legacySourceNames = [] }) {
     if (!requireObs()) return false;
     try {
@@ -1509,45 +1614,14 @@
       } catch {
         // The canonical source does not exist yet. Check known pre-v4 names before creating it.
       }
-      if (!input) {
-        for (const legacyName of legacySourceNames.filter(Boolean)) {
-          try {
-            const legacyInput = await obs.call("GetInputSettings", { inputName: legacyName });
-            if (legacyInput.inputKind && legacyInput.inputKind !== "browser_source") {
-              throw new Error(`Source “${legacyName}” มีอยู่แล้วแต่ไม่ใช่ Browser Source`);
-            }
-            await obs.call("SetInputName", { inputName: legacyName, newInputName: sourceName });
-            input = legacyInput;
-            break;
-          } catch (error) {
-            if (error.message?.includes("ไม่ใช่ Browser Source")) throw error;
-          }
-        }
+      if (input && legacySourceNames.length) {
+        requireBrowserInput(input, sourceName);
+        input = await preserveConflictingCanonicalSource({ input, sourceName, url });
       }
-      if (!input && legacySourceNames.length) {
-        try {
-          const requestedUrl = new URL(url, location.href);
-          const requestedTarget = `${requestedUrl.searchParams.get("mode") || ""}|${requestedUrl.searchParams.get("group") || ""}`;
-          const list = await obs.call("GetInputList", { inputKind: "browser_source" });
-          for (const candidate of list.inputs || []) {
-            if (!candidate.inputName?.startsWith("PepsLive Sponsor Dock -")) continue;
-            const candidateInput = await obs.call("GetInputSettings", { inputName: candidate.inputName });
-            const candidateUrl = new URL(candidateInput.inputSettings?.url || "", location.href);
-            const candidateTarget = `${candidateUrl.searchParams.get("mode") || ""}|${candidateUrl.searchParams.get("group") || ""}`;
-            if (candidateTarget !== requestedTarget) continue;
-            await obs.call("SetInputName", { inputName: candidate.inputName, newInputName: sourceName });
-            input = candidateInput;
-            break;
-          }
-        } catch {
-          // Older OBS versions may not expose GetInputList. Exact legacy-name migration above still applies.
-        }
-      }
+      if (!input) input = await migrateLegacyObsSource({ url, sourceName, legacySourceNames });
 
       if (input) {
-        if (input.inputKind && input.inputKind !== "browser_source") {
-          throw new Error(`Source “${sourceName}” มีอยู่แล้วแต่ไม่ใช่ Browser Source`);
-        }
+        requireBrowserInput(input, sourceName);
         await obs.call("SetInputSettings", {
           inputName: sourceName,
           inputSettings,
@@ -1589,12 +1663,50 @@
   }
 
   function fixedSourceName(mode, groupId) {
+    if (mode === "display") return "PEPS_SPONSOR_CLASSIC_DISPLAY";
     const isClassicAlias = mode === "auto" || mode === "display";
     const resolvedGroupId = mode === "auto"
       ? groupId || state.activeGroupId
       : isClassicAlias
       ? state.modeGroups[state.mode] || state.activeGroupId
       : groupId;
+    const sourceToken = (value, fallback, protectLossyValue = false) => {
+      const raw = String(value || fallback);
+      const normalized = raw.normalize("NFKD");
+      const token = normalized
+        .replace(/^group[_-]?/i, "")
+        .replace(/[^a-z0-9]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .toUpperCase()
+        .slice(0, 64) || fallback;
+      const generatedUuid = /^group_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(raw);
+      const underscoreUuidLookalike = /^group_[0-9a-f]{8}_[0-9a-f]{4}_[1-5][0-9a-f]{3}_[89ab][0-9a-f]{3}_[0-9a-f]{12}$/.test(raw);
+      const generatedSafe = /^group_[a-z0-9]+(?:_[a-z0-9]+)*$/.test(raw)
+        && raw.length - "group_".length <= 64
+        && raw !== "group_all"
+        && !underscoreUuidLookalike;
+      const preservesExistingIdentity = raw === "all" || generatedUuid || generatedSafe;
+      const needsHash = protectLossyValue && !preservesExistingIdentity;
+      if (!needsHash) return token;
+      let hash = 2166136261;
+      for (let index = 0; index < raw.length; index += 1) {
+        hash ^= raw.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      const suffix = (hash >>> 0).toString(36).toUpperCase().padStart(7, "0").slice(-7);
+      return `${token.slice(0, 54)}__H${suffix}`;
+    };
+    const resolvedMode = mode;
+    return `PEPS_SPONSOR_${sourceToken(resolvedMode, "MODE")}_${sourceToken(resolvedGroupId, "GROUP", true)}`.slice(0, 160);
+  }
+
+  function previousFixedSourceName(mode, groupId) {
+    const isClassicAlias = mode === "auto" || mode === "display";
+    const resolvedGroupId = mode === "auto"
+      ? groupId || state.activeGroupId
+      : isClassicAlias
+        ? state.modeGroups[state.mode] || state.activeGroupId
+        : groupId;
     const sourceToken = (value, fallback) => String(value || fallback)
       .normalize("NFKD")
       .replace(/^group[_-]?/i, "")
@@ -1622,13 +1734,61 @@
     return `PepsLive Sponsor Dock - ${modeLabel} - ${group?.name || "Group"}`.slice(0, 160);
   }
 
+  function fixedLegacySourceNames(mode, groupId) {
+    const aliases = mode === "lower_third"
+      ? ["bottom_bar"]
+      : mode === "sponsor_break"
+        ? ["fullscreen_break"]
+        : [];
+    return [...new Set([mode, ...aliases].flatMap((candidateMode) => [
+      previousFixedSourceName(candidateMode, groupId),
+      legacyFixedSourceName(candidateMode, groupId)
+    ]))];
+  }
+
+  async function resolveFixedSourceForAction(mode, groupId, url) {
+    if (!requireObs()) return "";
+    const sourceName = fixedSourceName(mode, groupId);
+    let input = null;
+    try {
+      input = await obs.call("GetInputSettings", { inputName: sourceName });
+      requireBrowserInput(input, sourceName);
+    } catch (error) {
+      if (error.code === "OBS_SOURCE_KIND_MISMATCH") {
+        setObsUi("error", error.message);
+        return "";
+      }
+    }
+    try {
+      if (input) {
+        input = await preserveConflictingCanonicalSource({ input, sourceName, url });
+        if (input) return sourceName;
+      }
+      const migrated = await migrateLegacyObsSource({
+        url,
+        sourceName,
+        legacySourceNames: fixedLegacySourceNames(mode, groupId)
+      });
+      if (!migrated) {
+        setObsUi("error", "ยังไม่มี Source ของโหมดนี้ กรุณากด เพิ่ม/อัปเดต Source ก่อน");
+        return "";
+      }
+      return sourceName;
+    } catch (error) {
+      setObsUi("error", `ย้าย Source เดิมไม่สำเร็จ: ${error.message || error}`);
+      return "";
+    }
+  }
+
   function createFixedSource(mode, groupId, url) {
     collectSettings();
     const sourceName = mode === "live" ? state.obs.sourceName : fixedSourceName(mode, groupId);
     return ensureObsSource({
       url,
       sourceName,
-      legacySourceNames: mode === "live" ? [] : [legacyFixedSourceName(mode, groupId)]
+      legacySourceNames: mode === "live"
+        ? []
+        : fixedLegacySourceNames(mode, groupId)
     });
   }
 
@@ -1995,6 +2155,7 @@
       state.activeGroupId = els.outputGroup.value;
       persist("เปลี่ยน Group ของโหมดแล้ว");
       renderGroupEditor();
+      renderModeStudio();
       renderModeGroupMap();
       renderUrlList();
       updatePreviewContext(true);
@@ -2007,9 +2168,21 @@
       if (created) els.modeSourceFeedback.textContent = "Source พร้อมใช้งานแล้ว: สร้างใหม่หรืออัปเดตรายการเดิมโดยไม่ซ้ำ";
       else if (!obsConnected) els.modeSourceFeedback.textContent = "ยังไม่ได้เชื่อมต่อ OBS — ไปที่เมนู ระบบ OBS เพื่อต่อก่อน";
     });
-    $("refreshModeSourceBtn").addEventListener("click", () => refreshBrowserSource(fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
-    $("showModeSourceBtn").addEventListener("click", () => setSourceVisibility(true, fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
-    $("hideModeSourceBtn").addEventListener("click", () => setSourceVisibility(false, fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
+    $("refreshModeSourceBtn").addEventListener("click", async () => {
+      const groupId = state.modeGroups[state.mode] || state.activeGroupId;
+      const sourceName = await resolveFixedSourceForAction(state.mode, groupId, els.currentModeUrl.value);
+      if (sourceName) await refreshBrowserSource(sourceName);
+    });
+    $("showModeSourceBtn").addEventListener("click", async () => {
+      const groupId = state.modeGroups[state.mode] || state.activeGroupId;
+      const sourceName = await resolveFixedSourceForAction(state.mode, groupId, els.currentModeUrl.value);
+      if (sourceName) await setSourceVisibility(true, sourceName);
+    });
+    $("hideModeSourceBtn").addEventListener("click", async () => {
+      const groupId = state.modeGroups[state.mode] || state.activeGroupId;
+      const sourceName = await resolveFixedSourceForAction(state.mode, groupId, els.currentModeUrl.value);
+      if (sourceName) await setSourceVisibility(false, sourceName);
+    });
 
     els.cmdVisibility.addEventListener("click", () => command(state.isVisible === false ? "show" : "hide"));
     $("cmdPrev").addEventListener("click", () => command("prev"));
