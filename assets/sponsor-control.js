@@ -5,7 +5,12 @@
   const Modes = window.PepsSponsorModes;
   if (!P || !Modes) throw new Error("Sponsor control dependencies are missing");
 
-  const VALID_VIEWS = ["live", "sponsors", "collections", "modes", "settings"];
+  const VALID_VIEWS = ["live", "library", "modes", "settings"];
+  const RECOMMENDED_MODE_IDS = new Set([
+    "lower_third", "rotator", "broadcast_ticker", "corner_badge",
+    "side_tower", "sponsor_break", "goal_popup"
+  ]);
+  const ADDITIONAL_MODE_IDS = new Set(["cover3d", "spotlight", "float"]);
   const OBS_LIBRARY_URL = "https://cdn.jsdelivr.net/npm/obs-websocket-js@5.0.4/dist/obs-ws.min.js";
   const MAX_IMPORT_BYTES = P.MAX_PROJECT_BYTES;
   const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
@@ -42,7 +47,6 @@
     projectStatus: $("projectStatus"),
     sponsorCount: $("sponsorCount"),
     navSponsorCount: $("navSponsorCount"),
-    navGroupCount: $("navGroupCount"),
     libraryCount: $("libraryCount"),
     playlistStatus: $("playlistStatus"),
     displayStatus: $("displayStatus"),
@@ -90,6 +94,9 @@
     modeStudioTitle: $("modeStudioTitle"),
     modeStudioDescription: $("modeStudioDescription"),
     modeControls: $("modeControls"),
+    currentModeUrl: $("currentModeUrl"),
+    openModeUrlBtn: $("openModeUrlBtn"),
+    modeSourceFeedback: $("modeSourceFeedback"),
     modeGroupMap: $("modeGroupMap"),
     urlList: $("urlList"),
     previewFrame: $("previewFrame"),
@@ -289,7 +296,6 @@
     els.sponsorCount.textContent = String(state.images.length);
     els.navSponsorCount.textContent = String(state.images.length);
     els.libraryCount.textContent = String(state.images.length);
-    els.navGroupCount.textContent = String(state.groups.length);
     els.playlistStatus.textContent = playlist?.name || "-";
     const alternateData = state.migration.alternateRedesignDetected === true;
     const missingImages = Math.max(0, Number(state.migration.missingImages) || 0);
@@ -312,16 +318,38 @@
     const paused = state.isPaused === true;
     els.cmdVisibility.classList.toggle("is-on", visible);
     els.cmdVisibility.setAttribute("aria-pressed", String(visible));
-    els.visibilityLabel.textContent = visible ? "ON AIR" : "OFF AIR";
+    els.visibilityLabel.textContent = visible ? "กำลังแสดง" : "ซ่อนอยู่";
     els.visibilityHint.textContent = visible ? "แสดงอยู่บนหน้าจอ" : "ซ่อนจากหน้าจอ";
-    els.displayStatus.textContent = visible ? (paused ? "PAUSED" : "ON AIR") : "HIDDEN";
+    els.displayStatus.textContent = visible ? (paused ? "พักอยู่" : "กำลังแสดง") : "ซ่อนอยู่";
     els.displayStatus.style.color = visible ? "var(--success)" : "var(--danger)";
     els.cmdPause.setAttribute("aria-pressed", String(paused));
     els.pauseIcon.textContent = paused ? "▶" : "Ⅱ";
-    els.pauseLabel.textContent = paused ? "Resume" : "Pause";
+    els.pauseLabel.textContent = paused ? "เล่นต่อ" : "พัก";
+  }
+
+  function activateLibrarySection(section = "logos", options = {}) {
+    const validSections = ["logos", "playlists", "groups"];
+    if (!validSections.includes(section)) section = "logos";
+    document.body.dataset.librarySection = section;
+    const sponsorPanel = $("view-sponsors");
+    const collectionPanel = $("view-collections");
+    sponsorPanel.hidden = section !== "logos";
+    collectionPanel.hidden = section === "logos";
+    sponsorPanel.classList.toggle("is-active", section === "logos");
+    collectionPanel.classList.toggle("is-active", section !== "logos");
+    for (const panel of document.querySelectorAll("[data-library-panel]")) {
+      panel.hidden = panel.dataset.libraryPanel !== section;
+    }
+    for (const button of document.querySelectorAll("[data-library-section]")) {
+      const active = button.dataset.librarySection === section;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+      if (active && options.focus) button.focus();
+    }
   }
 
   function activateView(view, options = {}) {
+    if (["sponsors", "collections"].includes(view)) view = "library";
     if (!VALID_VIEWS.includes(view)) view = "live";
     document.body.dataset.activeView = view;
     for (const button of document.querySelectorAll("[data-view]")) {
@@ -331,11 +359,15 @@
       if (active) button.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     for (const panel of document.querySelectorAll("[data-view-panel]")) {
-      const active = panel.dataset.viewPanel === view;
+      const active = view === "library"
+        ? ["sponsors", "collections"].includes(panel.dataset.viewPanel)
+        : panel.dataset.viewPanel === view;
       panel.hidden = !active;
       panel.classList.toggle("is-active", active);
     }
-    history.replaceState(null, "", `#${view}`);
+    $("librarySwitcher").hidden = view !== "library";
+    if (view === "library") activateLibrarySection(document.body.dataset.librarySection || "logos");
+    if (options.writeHash !== false) history.replaceState(null, "", `#${view}`);
     if (options.focus) document.querySelector(`[data-view="${view}"]`)?.focus();
     updatePreviewContext(true);
   }
@@ -1000,7 +1032,13 @@
   function renderModeLibrary() {
     const category = els.modeCategoryFilter.value;
     els.modeLibrary.replaceChildren();
-    for (const definition of Modes.definitions.filter((mode) => category === "all" || mode.category === category)) {
+    const visibleModes = Modes.definitions.filter((mode) => {
+      if (category === "recommended") return RECOMMENDED_MODE_IDS.has(mode.id);
+      if (category === "additional") return ADDITIONAL_MODE_IDS.has(mode.id);
+      if (category === "legacy") return !RECOMMENDED_MODE_IDS.has(mode.id) && !ADDITIONAL_MODE_IDS.has(mode.id);
+      return category === "all" || mode.category === category;
+    });
+    for (const definition of visibleModes) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "mode-card";
@@ -1030,6 +1068,9 @@
     fillSelect(els.outputGroup, groupOptions(), state.modeGroups[state.mode] || state.activeGroupId);
     els.modeStudioTitle.textContent = definition.label;
     els.modeStudioDescription.textContent = definition.description;
+    const url = pageUrl(state.mode, state.modeGroups[state.mode] || state.activeGroupId);
+    els.currentModeUrl.value = url;
+    els.openModeUrlBtn.href = url;
     els.modeControls.replaceChildren();
 
     const values = state.modeSettings[state.mode] || Modes.defaultsFor(state.mode);
@@ -1403,14 +1444,14 @@
     els.obsStatus.replaceChildren();
     const headerDot = document.createElement("span");
     headerDot.className = "status-dot";
-    els.obsStatus.append(headerDot, document.createTextNode(connected ? "OBS Connected" : loading ? "OBS Connecting" : "OBS Offline"));
+    els.obsStatus.append(headerDot, document.createTextNode(connected ? "OBS เชื่อมต่อแล้ว" : loading ? "กำลังเชื่อมต่อ OBS" : "OBS ออฟไลน์"));
     els.obsConnectionBadge.className = `status-chip ${connected ? "connected" : status === "error" ? "error" : ""}`.trim();
     els.obsConnectionBadge.replaceChildren();
     const dot = document.createElement("span");
     dot.className = "status-dot";
-    els.obsConnectionBadge.append(dot, document.createTextNode(connected ? "Connected" : loading ? "Connecting" : "Offline"));
+    els.obsConnectionBadge.append(dot, document.createTextNode(connected ? "เชื่อมต่อแล้ว" : loading ? "กำลังเชื่อมต่อ" : "ออฟไลน์"));
     els.obsFeedback.textContent = message;
-    els.obsConnectLabel.textContent = connected ? "Reconnect OBS" : loading ? "กำลังเชื่อมต่อ…" : "Connect OBS";
+    els.obsConnectLabel.textContent = connected ? "เชื่อมต่อ OBS ใหม่" : loading ? "กำลังเชื่อมต่อ…" : "เชื่อมต่อ OBS";
   }
 
   async function connectObs() {
@@ -1446,7 +1487,7 @@
     return false;
   }
 
-  async function ensureObsSource({ url, sourceName }) {
+  async function ensureObsSource({ url, sourceName, legacySourceNames = [] }) {
     if (!requireObs()) return false;
     try {
       const sceneResponse = await obs.call("GetCurrentProgramScene");
@@ -1462,10 +1503,48 @@
         restart_when_active: false
       };
 
-      let inputExists = false;
+      let input = null;
       try {
-        const input = await obs.call("GetInputSettings", { inputName: sourceName });
-        inputExists = true;
+        input = await obs.call("GetInputSettings", { inputName: sourceName });
+      } catch {
+        // The canonical source does not exist yet. Check known pre-v4 names before creating it.
+      }
+      if (!input) {
+        for (const legacyName of legacySourceNames.filter(Boolean)) {
+          try {
+            const legacyInput = await obs.call("GetInputSettings", { inputName: legacyName });
+            if (legacyInput.inputKind && legacyInput.inputKind !== "browser_source") {
+              throw new Error(`Source “${legacyName}” มีอยู่แล้วแต่ไม่ใช่ Browser Source`);
+            }
+            await obs.call("SetInputName", { inputName: legacyName, newInputName: sourceName });
+            input = legacyInput;
+            break;
+          } catch (error) {
+            if (error.message?.includes("ไม่ใช่ Browser Source")) throw error;
+          }
+        }
+      }
+      if (!input && legacySourceNames.length) {
+        try {
+          const requestedUrl = new URL(url, location.href);
+          const requestedTarget = `${requestedUrl.searchParams.get("mode") || ""}|${requestedUrl.searchParams.get("group") || ""}`;
+          const list = await obs.call("GetInputList", { inputKind: "browser_source" });
+          for (const candidate of list.inputs || []) {
+            if (!candidate.inputName?.startsWith("PepsLive Sponsor Dock -")) continue;
+            const candidateInput = await obs.call("GetInputSettings", { inputName: candidate.inputName });
+            const candidateUrl = new URL(candidateInput.inputSettings?.url || "", location.href);
+            const candidateTarget = `${candidateUrl.searchParams.get("mode") || ""}|${candidateUrl.searchParams.get("group") || ""}`;
+            if (candidateTarget !== requestedTarget) continue;
+            await obs.call("SetInputName", { inputName: candidate.inputName, newInputName: sourceName });
+            input = candidateInput;
+            break;
+          }
+        } catch {
+          // Older OBS versions may not expose GetInputList. Exact legacy-name migration above still applies.
+        }
+      }
+
+      if (input) {
         if (input.inputKind && input.inputKind !== "browser_source") {
           throw new Error(`Source “${sourceName}” มีอยู่แล้วแต่ไม่ใช่ Browser Source`);
         }
@@ -1474,8 +1553,7 @@
           inputSettings,
           overlay: true
         });
-      } catch (error) {
-        if (inputExists) throw error;
+      } else {
         await obs.call("CreateInput", {
           sceneName,
           inputName: sourceName,
@@ -1517,42 +1595,64 @@
       : isClassicAlias
       ? state.modeGroups[state.mode] || state.activeGroupId
       : groupId;
+    const sourceToken = (value, fallback) => String(value || fallback)
+      .normalize("NFKD")
+      .replace(/^group[_-]?/i, "")
+      .replace(/[^a-z0-9]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .toUpperCase()
+      .slice(0, 64) || fallback;
+    const resolvedMode = mode === "display" ? `DISPLAY_${state.mode}` : mode;
+    return `PEPS_SPONSOR_${sourceToken(resolvedMode, "MODE")}_${sourceToken(resolvedGroupId, "GROUP")}`.slice(0, 160);
+  }
+
+  function legacyFixedSourceName(mode, groupId) {
+    const isClassicAlias = mode === "auto" || mode === "display";
+    const resolvedGroupId = mode === "auto"
+      ? groupId || state.activeGroupId
+      : isClassicAlias
+        ? state.modeGroups[state.mode] || state.activeGroupId
+        : groupId;
     const group = P.getGroup(state, resolvedGroupId);
     const modeLabel = mode === "auto"
       ? "อัตโนมัติ ตามค่าหน้า Control"
       : mode === "display"
         ? `Classic Display (${Modes.labels[state.mode] || state.mode})`
-      : Modes.labels[mode] || mode;
+        : Modes.labels[mode] || mode;
     return `PepsLive Sponsor Dock - ${modeLabel} - ${group?.name || "Group"}`.slice(0, 160);
   }
 
   function createFixedSource(mode, groupId, url) {
     collectSettings();
     const sourceName = mode === "live" ? state.obs.sourceName : fixedSourceName(mode, groupId);
-    return ensureObsSource({ url, sourceName });
+    return ensureObsSource({
+      url,
+      sourceName,
+      legacySourceNames: mode === "live" ? [] : [legacyFixedSourceName(mode, groupId)]
+    });
   }
 
-  async function refreshBrowserSource() {
+  async function refreshBrowserSource(sourceName = state.obs.sourceName, reloadLiveDisplay = false) {
     if (!requireObs()) return;
     try {
       await obs.call("PressInputPropertiesButton", {
-        inputName: state.obs.sourceName,
+        inputName: sourceName,
         propertyName: "refreshnocache"
       });
-      command("reload");
-      setObsUi("connected", `Refresh “${state.obs.sourceName}” แล้ว`);
+      if (reloadLiveDisplay) command("reload");
+      setObsUi("connected", `โหลด Source “${sourceName}” ใหม่แล้ว`);
     } catch (error) {
       setObsUi("error", `Refresh ไม่สำเร็จ: ${error.message || error}`);
     }
   }
 
-  async function setSourceVisibility(visible) {
+  async function setSourceVisibility(visible, sourceName = state.obs.sourceName) {
     if (!requireObs()) return;
     try {
       const scene = await obs.call("GetCurrentProgramScene");
       const item = await obs.call("GetSceneItemId", {
         sceneName: scene.currentProgramSceneName,
-        sourceName: state.obs.sourceName
+        sourceName
       });
       await obs.call("SetSceneItemEnabled", {
         sceneName: scene.currentProgramSceneName,
@@ -1793,7 +1893,7 @@
         "Reset โปรเจกต์แล้ว",
         cleanupFailures ? `มีไฟล์รูปเก่าล้างไม่สำเร็จ ${cleanupFailures} รายการ` : ""
       );
-      activateView("sponsors");
+      activateView("library");
     } catch (error) {
       state = await P.loadStateAuthoritative();
       persistenceBase = P.clone(state);
@@ -1825,6 +1925,9 @@
       });
     }
     $("brandHome").addEventListener("click", () => activateView("live"));
+    for (const button of document.querySelectorAll("[data-library-section]")) {
+      button.addEventListener("click", () => activateLibrarySection(button.dataset.librarySection));
+    }
 
     for (const id of ["projectName", "opacity", "autoPlay", "safeArea", "showNames", "showTier"]) {
       $(id).addEventListener("input", () => {
@@ -1897,6 +2000,16 @@
       updatePreviewContext(true);
     });
     $("syncModeBtn").addEventListener("click", () => command("sync", { mode: state.mode }));
+    $("copyModeUrlBtn").addEventListener("click", () => copyText(els.currentModeUrl.value, "คัดลอก URL ของรูปแบบแล้ว"));
+    $("createModeSourceBtn").addEventListener("click", async () => {
+      const groupId = state.modeGroups[state.mode] || state.activeGroupId;
+      const created = await createFixedSource(state.mode, groupId, els.currentModeUrl.value);
+      if (created) els.modeSourceFeedback.textContent = "Source พร้อมใช้งานแล้ว: สร้างใหม่หรืออัปเดตรายการเดิมโดยไม่ซ้ำ";
+      else if (!obsConnected) els.modeSourceFeedback.textContent = "ยังไม่ได้เชื่อมต่อ OBS — ไปที่เมนู ระบบ OBS เพื่อต่อก่อน";
+    });
+    $("refreshModeSourceBtn").addEventListener("click", () => refreshBrowserSource(fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
+    $("showModeSourceBtn").addEventListener("click", () => setSourceVisibility(true, fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
+    $("hideModeSourceBtn").addEventListener("click", () => setSourceVisibility(false, fixedSourceName(state.mode, state.modeGroups[state.mode] || state.activeGroupId)));
 
     els.cmdVisibility.addEventListener("click", () => command(state.isVisible === false ? "show" : "hide"));
     $("cmdPrev").addEventListener("click", () => command("prev"));
@@ -1921,7 +2034,7 @@
       connectObs();
     });
     $("createSourceBtn").addEventListener("click", createDynamicSource);
-    $("refreshSourceBtn").addEventListener("click", refreshBrowserSource);
+    $("refreshSourceBtn").addEventListener("click", () => refreshBrowserSource(state.obs.sourceName, true));
     $("showSourceBtn").addEventListener("click", () => setSourceVisibility(true));
     $("hideSourceBtn").addEventListener("click", () => setSourceVisibility(false));
 
@@ -1968,7 +2081,7 @@
       }
     });
 
-    window.addEventListener("hashchange", () => activateView(location.hash.slice(1) || "live"));
+    window.addEventListener("hashchange", () => activateView(location.hash.slice(1) || "live", { writeHash: false }));
     previewResizeObserver = new ResizeObserver(updatePreviewScale);
     previewResizeObserver.observe(els.previewFrame.parentElement);
     window.addEventListener("pagehide", (event) => {
@@ -2015,7 +2128,7 @@
       bindSettingsFromState();
       bindEvents();
       await renderAll();
-      activateView(location.hash.slice(1) || "live");
+      activateView(location.hash.slice(1) || "live", { writeHash: false });
       updatePreviewScale();
       setSaveStatus("พร้อมใช้งาน", "success");
     } catch (error) {

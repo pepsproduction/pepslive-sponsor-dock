@@ -83,6 +83,18 @@ assert(
 );
 assert(!read("assets/sponsor-control.js").includes("seedSamplesIfEmpty"), "Legacy auto-seed API returned");
 assert(!read("assets/sponsor-shared.js").includes('password: ""'), "OBS password must not be persisted");
+assert((controlHtml.match(/class="nav-item/g) || []).length === 4, "Control must expose exactly four primary navigation items");
+for (const label of ["ควบคุมสด", "โลโก้และชุด", "รูปแบบแสดงผล", "ระบบ OBS"]) {
+  assert(controlHtml.includes(`<span>${label}</span>`), `Primary navigation is missing Thai label ${label}`);
+}
+assert(
+  controlHtml.includes('<option value="recommended">โหมดแนะนำ (7)</option>'),
+  "Mode Library must default to the seven recommended modes"
+);
+assert(
+  read("assets/sponsor-control.js").includes("PEPS_SPONSOR_${sourceToken(resolvedMode"),
+  "Fixed OBS source names must be stable and ID-based"
+);
 
 const css = read("assets/sponsor.css");
 assert((css.match(/{/g) || []).length === (css.match(/}/g) || []).length, "CSS braces are unbalanced");
