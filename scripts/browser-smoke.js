@@ -240,6 +240,13 @@ function fakeObsPreloadSource() {
           if (!input) throw new Error("Input not found");
           return clone(input);
         }
+        if (requestType === "GetInputList") {
+          return {
+            inputs: Object.entries(mock.inputs)
+              .filter(([, input]) => !data.inputKind || input.inputKind === data.inputKind)
+              .map(([inputName, input]) => ({ inputName, inputKind: input.inputKind }))
+          };
+        }
         if (requestType === "SetInputSettings") {
           const input = mock.inputs[data.inputName];
           if (!input) throw new Error("Input not found");
@@ -247,6 +254,18 @@ function fakeObsPreloadSource() {
             ...(input.inputSettings || {}),
             ...(data.inputSettings || {})
           };
+          return {};
+        }
+        if (requestType === "SetInputName") {
+          const input = mock.inputs[data.inputName];
+          if (!input) throw new Error("Input not found");
+          if (mock.inputs[data.newInputName]) throw new Error("Input already exists");
+          mock.inputs[data.newInputName] = input;
+          delete mock.inputs[data.inputName];
+          if (mock.sceneItems[data.inputName]) {
+            mock.sceneItems[data.newInputName] = mock.sceneItems[data.inputName];
+            delete mock.sceneItems[data.inputName];
+          }
           return {};
         }
         if (requestType === "CreateInput") {
@@ -667,7 +686,7 @@ async function main() {
     await waitFor(
       () => cdp.evaluate(`typeof PepsSponsor === "object"
         && typeof PepsSponsorModes === "object"
-        && document.getElementById("modeLibrary")?.children.length === 21`),
+        && document.querySelectorAll("#modeLibrary .mode-card").length === 7`),
       "control application initialization"
     );
     const controlRoute = await cdp.evaluate(`({
@@ -1057,6 +1076,20 @@ async function main() {
       () => cdp.evaluate(`document.getElementById("view-modes").classList.contains("is-active")`),
       "Modes workspace activation"
     );
+    const recommendedModes = await cdp.evaluate(`(() => ({
+      filter: document.getElementById("modeCategoryFilter").value,
+      ids: [...document.querySelectorAll("#modeLibrary .mode-card")].map((card) => card.dataset.mode)
+    }))()`);
+    assert(recommendedModes.filter === "recommended", "Mode Library must open with recommended modes");
+    assert(recommendedModes.ids.length === 7, "Mode Library must show 7 recommended modes first");
+    for (const id of ["lower_third", "rotator", "broadcast_ticker", "corner_badge", "side_tower", "sponsor_break", "goal_popup"]) {
+      assert(recommendedModes.ids.includes(id), `Recommended Mode Library is missing ${id}`);
+    }
+    await cdp.evaluate(`(() => {
+      const filter = document.getElementById("modeCategoryFilter");
+      filter.value = "all";
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
     const textControlResults = await cdp.evaluate(`(() => {
       const results = [];
       for (const definition of PepsSponsorModes.definitions) {
@@ -1384,6 +1417,65 @@ async function main() {
     );
     assertNoBrowserErrors(cdp, transferMarker, "Export/import transaction workflow");
 
+    const librarySections = await cdp.evaluate(`(() => {
+      document.getElementById("tab-library").click();
+      const read = () => ({
+        logosHidden: document.getElementById("view-sponsors").hidden,
+        collectionsHidden: document.getElementById("view-collections").hidden,
+        groupsHidden: document.querySelector('[data-library-panel="groups"]').hidden,
+        playlistsHidden: document.querySelector('[data-library-panel="playlists"]').hidden
+      });
+      const logos = read();
+      document.querySelector('[data-library-section="playlists"]').click();
+      const playlists = read();
+      document.querySelector('[data-library-section="groups"]').click();
+      const groups = read();
+      return { logos, playlists, groups };
+    })()`);
+    assert(!librarySections.logos.logosHidden && librarySections.logos.collectionsHidden, "Logo Library must open as one focused section");
+    assert(!librarySections.playlists.playlistsHidden && librarySections.playlists.groupsHidden, "Sponsor sets must hide fixed groups");
+    assert(!librarySections.groups.groupsHidden && librarySections.groups.playlistsHidden, "Fixed groups must hide Sponsor sets");
+
+    await cdp.evaluate(`document.getElementById("tab-live").click()`);
+    const responsiveResults = [];
+    for (const viewport of [
+      { width: 340, height: 900 },
+      { width: 400, height: 720 },
+      { width: 500, height: 900 },
+      { width: 720, height: 900 },
+      { width: 980, height: 900 },
+      { width: 1440, height: 1000 }
+    ]) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        ...viewport,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      const result = await cdp.evaluate(`(() => {
+        const nav = document.querySelector(".workspace-nav");
+        const controls = ["cmdVisibility", "cmdPrev", "cmdPause", "cmdNext", "cmdBreak", "cmdGoal"]
+          .map((id) => document.getElementById(id).getBoundingClientRect());
+        return {
+          width: innerWidth,
+          pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
+          navFits: nav.scrollWidth <= nav.clientWidth + 1,
+          controlsFit: controls.every((rect) => rect.left >= -1 && rect.right <= innerWidth + 1 && rect.width > 0),
+          goalTop: document.getElementById("cmdGoal").getBoundingClientRect().top,
+          previewVisible: getComputedStyle(document.querySelector(".preview-rail")).display !== "none"
+        };
+      })()`);
+      responsiveResults.push(result);
+    }
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    for (const result of responsiveResults) {
+      assert(result.pageFits, `Control page overflows horizontally at ${result.width}px`);
+      assert(result.navFits, `Primary navigation requires horizontal scrolling at ${result.width}px`);
+      assert(result.controlsFit, `Live controls are clipped at ${result.width}px`);
+    }
+    const dock400 = responsiveResults.find((result) => result.width === 400);
+    assert(dock400.goalTop < 720, "Primary Live controls must remain in the first 400x720 Dock viewport");
+    assert(!dock400.previewVisible, "Live Preview must collapse in a narrow Dock");
+
     const obsMarker = cdp.events.length;
     await cdp.evaluate(`(() => {
       document.getElementById("obsPassword").value = "qa-session-only";
@@ -1391,7 +1483,7 @@ async function main() {
     })()`);
     await waitFor(
       () => cdp.evaluate(`window.__obsMock.connections.length === 1
-        && document.getElementById("obsConnectionBadge").textContent.includes("Connected")`),
+        && document.getElementById("obsConnectionBadge").textContent.includes("เชื่อมต่อแล้ว")`),
       "fake OBS connection"
     );
     const connection = await cdp.evaluate(`window.__obsMock.connections[0]`);
@@ -1465,12 +1557,8 @@ async function main() {
     assert(!!fixedObs.create, "Absent fixed source must call CreateInput");
     assert(fixedObs.create.requestData.inputKind === "browser_source", "Fixed source must be a browser_source");
     assert(
-      fixedObs.create.requestData.inputName !== "PEPS_SPONSOR_DISPLAY",
-      "Fixed explicit source must have a distinct name"
-    );
-    assert(
-      fixedObs.create.requestData.inputName.includes("Beta Group"),
-      `Fixed source name must identify its group: ${fixedObs.create.requestData.inputName}`
+      fixedObs.create.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA",
+      `Fixed source name must use stable mode/group IDs: ${fixedObs.create.requestData.inputName}`
     );
     const fixedSettings = fixedObs.create.requestData.inputSettings;
     const fixedUrl = new URL(fixedSettings.url);
@@ -1478,6 +1566,108 @@ async function main() {
     assert(fixedUrl.searchParams.get("group") === "group_beta", "Fixed source URL must retain its explicit group");
     assert(fixedSettings.is_local_file === false, "Fixed Browser Source must disable local-file mode");
     assert(fixedSettings.local_file === "", "Fixed Browser Source must clear local_file");
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
+        const input = item.querySelector("input");
+        if (!input) return false;
+        const url = new URL(input.value);
+        return url.searchParams.get("mode") === "orbit"
+          && url.searchParams.get("group") === "group_beta";
+      });
+      row?.querySelector(".url-actions button:last-child")?.click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputSettings"
+        && call.requestData.inputName === "PEPS_SPONSOR_ORBIT_BETA"
+      )`),
+      "existing fixed OBS source update"
+    );
+    const repeatedFixedSource = await cdp.evaluate(`({
+      creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+      updates: window.__obsMock.calls.filter((call) => call.requestType === "SetInputSettings").length
+    })`);
+    assert(repeatedFixedSource.creates === 0, "Updating a fixed source must not create a duplicate OBS input");
+    assert(repeatedFixedSource.updates === 1, "Updating a fixed source must call SetInputSettings once");
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const legacyName = "PepsLive Sponsor Dock - " + PepsSponsorModes.labels.spotlight + " - Beta Group";
+      window.__obsMock.inputs[legacyName] = {
+        inputKind: "browser_source",
+        inputSettings: { is_local_file: false, url: "https://legacy.invalid/" }
+      };
+      window.__obsMock.sceneItems[legacyName] = 991;
+      const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
+        const input = item.querySelector("input");
+        return input && new URL(input.value).searchParams.get("mode") === "spotlight";
+      });
+      row?.querySelector(".url-actions button:last-child")?.click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputName"
+        && call.requestData.newInputName === "PEPS_SPONSOR_SPOTLIGHT_BETA"
+      )`),
+      "legacy fixed OBS source migration"
+    );
+    const migratedFixedSource = await cdp.evaluate(`({
+      creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+      canonicalExists: !!window.__obsMock.inputs.PEPS_SPONSOR_SPOTLIGHT_BETA,
+      legacyExists: Object.keys(window.__obsMock.inputs).some((name) => name.startsWith("PepsLive Sponsor Dock -") && name.includes("Beta Group"))
+    })`);
+    assert(migratedFixedSource.creates === 0, "Migrating a legacy fixed source must not create a duplicate input");
+    assert(migratedFixedSource.canonicalExists, "Legacy fixed source must be renamed to the canonical ID-based name");
+
+    await cdp.evaluate(`(() => {
+      window.__obsMock.resetCalls();
+      const row = [...document.querySelectorAll("#urlList .url-item")].find((item) => {
+        const input = item.querySelector("input");
+        return input && new URL(input.value).searchParams.get("mode") === "side_tower";
+      });
+      const legacyName = "PepsLive Sponsor Dock - ชื่อโหมดเดิม - ชื่อกลุ่มก่อนแก้";
+      window.__obsMock.inputs[legacyName] = {
+        inputKind: "browser_source",
+        inputSettings: { is_local_file: false, url: row.querySelector("input").value }
+      };
+      window.__obsMock.sceneItems[legacyName] = 992;
+      row?.querySelector(".url-actions button:last-child")?.click();
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "SetInputName"
+        && call.requestData.newInputName === "PEPS_SPONSOR_SIDE_TOWER_BETA"
+      )`),
+      "renamed legacy fixed OBS source discovery"
+    );
+    const discoveredLegacySource = await cdp.evaluate(`({
+      creates: window.__obsMock.calls.filter((call) => call.requestType === "CreateInput").length,
+      canonicalExists: !!window.__obsMock.inputs.PEPS_SPONSOR_SIDE_TOWER_BETA
+    })`);
+    assert(discoveredLegacySource.creates === 0, "A legacy source with the same display URL must not be duplicated");
+    assert(discoveredLegacySource.canonicalExists, "A renamed legacy source must migrate by matching its display URL");
+
+    const fixedRefreshCommandId = await cdp.evaluate(`(() => {
+      document.querySelector('#modeLibrary [data-mode="spotlight"]')?.click();
+      window.__obsMock.resetCalls();
+      const commandId = PepsSponsor.loadState().command.id;
+      document.getElementById("refreshModeSourceBtn").click();
+      return commandId;
+    })()`);
+    await waitFor(
+      () => cdp.evaluate(`window.__obsMock.calls.some((call) =>
+        call.requestType === "PressInputPropertiesButton"
+        && call.requestData.inputName === "PEPS_SPONSOR_SPOTLIGHT_BETA"
+      )`),
+      "fixed Mode Studio source refresh"
+    );
+    const fixedRefreshAfter = await cdp.evaluate(`PepsSponsor.loadState().command.id`);
+    assert(
+      fixedRefreshAfter === fixedRefreshCommandId,
+      "Refreshing a fixed source must not broadcast a reload command to the Live Display"
+    );
 
     await cdp.evaluate(`(() => {
       window.__obsMock.resetCalls();
@@ -1499,8 +1689,7 @@ async function main() {
       && new URL(call.requestData.inputSettings.url).searchParams.get("mode") === "auto"
     )`);
     assert(
-      classicAutoObs.requestData.inputName
-        === "PepsLive Sponsor Dock - อัตโนมัติ ตามค่าหน้า Control - Beta Group",
+      classicAutoObs.requestData.inputName === "PEPS_SPONSOR_AUTO_BETA",
       `Classic Auto source name changed: ${classicAutoObs.requestData.inputName}`
     );
     const classicAutoUrl = new URL(classicAutoObs.requestData.inputSettings.url);

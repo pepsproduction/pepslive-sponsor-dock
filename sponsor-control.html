@@ -35,26 +35,27 @@
 
     <nav class="workspace-nav" role="tablist" aria-label="พื้นที่ทำงาน">
       <button class="nav-item is-active" id="tab-live" type="button" role="tab" aria-selected="true" aria-controls="view-live" data-view="live">
-        <span class="nav-glyph" aria-hidden="true">●</span><span>Live</span>
+        <span class="nav-glyph" aria-hidden="true">●</span><span>ควบคุมสด</span>
       </button>
-      <button class="nav-item" id="tab-sponsors" type="button" role="tab" aria-selected="false" aria-controls="view-sponsors" data-view="sponsors">
-        <span class="nav-glyph" aria-hidden="true">▦</span><span>Sponsors</span>
+      <button class="nav-item" id="tab-library" type="button" role="tab" aria-selected="false" aria-controls="librarySwitcher view-sponsors view-collections" data-view="library">
+        <span class="nav-glyph" aria-hidden="true">▦</span><span>โลโก้และชุด</span>
         <span class="nav-count" id="navSponsorCount">0</span>
       </button>
-      <button class="nav-item" id="tab-collections" type="button" role="tab" aria-selected="false" aria-controls="view-collections" data-view="collections">
-        <span class="nav-glyph" aria-hidden="true">≡</span><span>Collections</span>
-        <span class="nav-count" id="navGroupCount">0</span>
-      </button>
       <button class="nav-item" id="tab-modes" type="button" role="tab" aria-selected="false" aria-controls="view-modes" data-view="modes">
-        <span class="nav-glyph" aria-hidden="true">◆</span><span>Modes</span>
+        <span class="nav-glyph" aria-hidden="true">◆</span><span>รูปแบบแสดงผล</span>
       </button>
       <button class="nav-item" id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="view-settings" data-view="settings">
-        <span class="nav-glyph" aria-hidden="true">⚙</span><span>Settings</span>
+        <span class="nav-glyph" aria-hidden="true">⚙</span><span>ระบบ OBS</span>
       </button>
     </nav>
 
     <div class="workspace-layout">
       <main class="workspace-main">
+        <nav class="library-switcher" id="librarySwitcher" aria-label="ส่วนของโลโก้และชุด" hidden>
+          <button class="is-active" type="button" data-library-section="logos" aria-pressed="true">คลังโลโก้</button>
+          <button type="button" data-library-section="playlists" aria-pressed="false">ชุดสปอนเซอร์</button>
+          <button type="button" data-library-section="groups" aria-pressed="false">กลุ่ม Source คงที่</button>
+        </nav>
         <section class="workspace-view is-active" id="view-live" role="tabpanel" aria-labelledby="tab-live" data-view-panel="live">
           <div class="section-intro">
             <div>
@@ -65,17 +66,17 @@
             <span class="live-badge"><span></span> LIVE CONTROL</span>
           </div>
 
-          <div class="status-strip" role="group" aria-label="สถานะโปรเจกต์">
-            <div><span>Project</span><strong id="projectStatus">PepsLive Sponsor Dock</strong></div>
-            <div><span>Sponsors</span><strong id="sponsorCount">0</strong></div>
-            <div><span>Playlist</span><strong id="playlistStatus">-</strong></div>
-            <div><span>Display</span><strong id="displayStatus">ON AIR</strong></div>
+          <div class="status-strip" role="group" aria-label="สถานะควบคุมสด">
+            <div hidden><span>โปรเจกต์</span><strong id="projectStatus">PepsLive Sponsor Dock</strong></div>
+            <div hidden><span>จำนวนสปอนเซอร์</span><strong id="sponsorCount">0</strong></div>
+            <div><span>ชุดสปอนเซอร์ที่ใช้งาน</span><strong id="playlistStatus">-</strong></div>
+            <div><span>สถานะหน้าจอ</span><strong id="displayStatus">กำลังแสดง</strong></div>
           </div>
 
           <section class="panel live-panel">
             <div class="live-topline">
               <label class="select-card" for="livePlaylist">
-                <span>Playlist ที่กำลังใช้</span>
+                <span>ชุดสปอนเซอร์ที่กำลังใช้</span>
                 <select id="livePlaylist"></select>
               </label>
               <button class="on-air-toggle is-on" id="cmdVisibility" type="button" aria-pressed="true" aria-label="แสดงหรือซ่อน Sponsor บนหน้าจอ">
@@ -98,19 +99,19 @@
             </div>
 
             <div class="transport" role="group" aria-label="ควบคุมลำดับ">
-              <button class="transport-btn" id="cmdPrev" type="button"><span aria-hidden="true">←</span><small>Previous</small></button>
+              <button class="transport-btn" id="cmdPrev" type="button"><span aria-hidden="true">←</span><small>ก่อนหน้า</small></button>
               <button class="transport-btn play" id="cmdPause" type="button" aria-pressed="false" aria-label="พักหรือเล่นต่อการหมุน Sponsor">
-                <span id="pauseIcon" aria-hidden="true">Ⅱ</span><small id="pauseLabel">Pause</small>
+                <span id="pauseIcon" aria-hidden="true">Ⅱ</span><small id="pauseLabel">พัก</small>
               </button>
-              <button class="transport-btn" id="cmdNext" type="button"><span aria-hidden="true">→</span><small>Next</small></button>
+              <button class="transport-btn" id="cmdNext" type="button"><span aria-hidden="true">→</span><small>ถัดไป</small></button>
             </div>
 
             <div class="trigger-grid">
               <button class="trigger-card break" id="cmdBreak" type="button">
-                <span class="trigger-kicker">10 SEC</span><strong>Sponsor Break</strong><small>บอร์ดรวม Sponsor เต็มจอ</small>
+                <span class="trigger-kicker">10 วินาที</span><strong>ช่วงผู้สนับสนุน</strong><small>บอร์ดรวมสปอนเซอร์เต็มจอ</small>
               </button>
               <button class="trigger-card goal" id="cmdGoal" type="button">
-                <span class="trigger-kicker">5 SEC</span><strong>Goal Popup</strong><small>ป๊อปอัป Sponsor จังหวะสำคัญ</small>
+                <span class="trigger-kicker">5 วินาที</span><strong>ผู้สนับสนุนจังหวะประตู</strong><small>ป๊อปอัปสปอนเซอร์จังหวะสำคัญ</small>
               </button>
             </div>
 
@@ -121,13 +122,13 @@
             </div>
 
             <div class="utility-row">
-              <button class="text-button" id="cmdReload" type="button">↻ Reload Display</button>
+              <button class="text-button" id="cmdReload" type="button">↻ โหลดหน้าจอใหม่</button>
               <span id="liveSourceHint">แนะนำให้ใช้ URL Live Display เป็น Browser Source หลักสำหรับหน้างาน</span>
             </div>
           </section>
         </section>
 
-        <section class="workspace-view" id="view-sponsors" role="tabpanel" aria-labelledby="tab-sponsors" data-view-panel="sponsors" hidden>
+        <section class="workspace-view" id="view-sponsors" role="tabpanel" aria-labelledby="tab-library" data-view-panel="sponsors" hidden>
           <div class="section-intro">
             <div>
               <p class="eyebrow">SPONSOR LIBRARY</p>
@@ -163,7 +164,7 @@
           </section>
         </section>
 
-        <section class="workspace-view" id="view-collections" role="tabpanel" aria-labelledby="tab-collections" data-view-panel="collections" hidden>
+        <section class="workspace-view" id="view-collections" role="tabpanel" aria-labelledby="tab-library" data-view-panel="collections" hidden>
           <div class="section-intro">
             <div>
               <p class="eyebrow">GROUPS + PLAYLISTS</p>
@@ -172,7 +173,7 @@
             </div>
           </div>
 
-          <section class="panel collection-panel">
+          <section class="panel collection-panel" data-library-panel="groups">
             <div class="panel-head">
               <div><span class="panel-kicker">FIXED OUTPUT SETS</span><h2>Groups</h2><p>รักษาระบบ Group และการผูกแต่ละโหมดจาก GitHub v3</p></div>
               <span class="count-pill"><b id="groupItemCount">0</b> ITEMS</span>
@@ -194,7 +195,7 @@
             <div class="playlist-items" id="groupMembers"></div>
           </section>
 
-          <section class="panel collection-panel">
+          <section class="panel collection-panel" data-library-panel="playlists">
             <div class="panel-head">
               <div><span class="panel-kicker">LIVE RUNDOWN</span><h2>Playlists</h2><p>จัดลำดับ Sponsor, รูปแบบแสดงผล และเวลาหมุนสำหรับหน้างาน</p></div>
               <span class="count-pill"><b id="playlistItemCount">0</b> ITEMS</span>
@@ -232,7 +233,10 @@
             </div>
             <label class="compact-filter" for="modeCategoryFilter"><span class="sr-only">กรองหมวดโหมด</span>
               <select id="modeCategoryFilter">
-                <option value="all">ทุกหมวด</option><option value="classic">Classic</option>
+                <option value="recommended">โหมดแนะนำ (7)</option>
+                <option value="additional">โหมดเพิ่มเติม (3)</option>
+                <option value="legacy">โหมดเก่าและโหมดทดลอง (11)</option>
+                <option value="all">ทุกโหมด</option><option value="classic">Classic</option>
                 <option value="motion">Motion</option><option value="playful">Playful</option>
                 <option value="showcase">Showcase</option><option value="broadcast">Broadcast</option>
                 <option value="event">Event</option>
@@ -253,17 +257,27 @@
               <label for="outputMode"><span>โหมด</span><select id="outputMode"></select></label>
               <label for="outputGroup"><span>Group ของโหมดนี้</span><select id="outputGroup"></select></label>
             </div>
+            <div class="mode-source-bar" id="modeSourceBar">
+              <input id="currentModeUrl" type="text" readonly aria-label="URL ของรูปแบบที่เลือก">
+              <button class="btn secondary" id="copyModeUrlBtn" type="button">คัดลอก URL</button>
+              <a class="btn secondary" id="openModeUrlBtn" target="_blank" rel="noopener">เปิดหน้าจอแสดงผล</a>
+              <button class="btn primary" id="createModeSourceBtn" type="button">เพิ่ม/อัปเดต Source ใน OBS</button>
+              <button class="btn secondary" id="refreshModeSourceBtn" type="button">โหลด Source ใหม่</button>
+              <button class="btn secondary" id="showModeSourceBtn" type="button">แสดงใน OBS</button>
+              <button class="btn secondary" id="hideModeSourceBtn" type="button">ซ่อนใน OBS</button>
+            </div>
+            <p class="mode-source-feedback" id="modeSourceFeedback">เลือกชุดโลโก้และรูปแบบ แล้วเพิ่มหรืออัปเดต Browser Source ได้จากตรงนี้</p>
             <div class="mode-controls" id="modeControls" role="group" aria-label="ตั้งค่าโหมดที่เลือก"></div>
           </section>
 
-          <details class="panel action-menu" open>
-            <summary>ผูกโหมดกับ Group</summary>
+          <details class="panel action-menu">
+            <summary>การตั้งค่าขั้นสูง: ผูกโหมดกับ Group</summary>
             <p class="hint-text">URL ของแต่ละโหมดจะใช้ Group ที่ผูกไว้ เว้นแต่ระบุ <code>&amp;group=...</code> ใน URL</p>
             <div class="mode-group-map" id="modeGroupMap" role="group" aria-label="การผูกโหมดกับ Group"></div>
           </details>
 
           <details class="panel action-menu" id="urlCenter">
-            <summary>URL Center และ OBS Sources</summary>
+            <summary>URL ขั้นสูงและระบบเก่า</summary>
             <p class="hint-text">Live Display URL ใช้กับ Live Control ส่วน Classic/Fixed URL ใช้สร้าง Source ตาม Mode Studio และ Group</p>
             <div class="url-list" id="urlList" role="region" aria-label="รายการ URL สำหรับ Display และ OBS"></div>
           </details>
@@ -286,8 +300,9 @@
             </div>
           </div>
 
-          <section class="panel">
-            <div class="panel-head"><div><span class="panel-kicker">PROJECT DEFAULTS</span><h2>ค่ากลางของโปรเจกต์</h2></div></div>
+          <details class="panel action-menu">
+            <summary>ค่ากลางขั้นสูงของโปรเจกต์</summary>
+            <p class="hint-text">ค่ารายโหมดใน Mode Studio เป็นค่าหลัก ส่วนค่านี้ใช้เป็นค่าเริ่มต้นหรือควบคุมทุกโหมด</p>
             <div class="form-grid">
               <label class="span-2" for="projectName"><span>ชื่อโปรเจกต์</span><input id="projectName" type="text" maxlength="120"></label>
               <label for="opacity"><span>ความโปร่งใส <b id="opacityValue">100%</b></span><input id="opacity" type="range" min="0" max="100" step="1"></label>
@@ -298,7 +313,7 @@
               <label class="toggle-card"><input id="showNames" type="checkbox"><span><strong>Show Names (Master)</strong><small>ปิดเพื่อซ่อนชื่อในทุกโหมด Broadcast</small></span></label>
               <label class="toggle-card"><input id="showTier" type="checkbox"><span><strong>Show Tier (Master)</strong><small>ปิดเพื่อซ่อนระดับ Sponsor ทุกโหมด</small></span></label>
             </div>
-          </section>
+          </details>
 
           <section class="panel obs-panel">
             <div class="panel-head">
@@ -310,18 +325,23 @@
                 <label for="obsHost"><span>Host</span><input id="obsHost" type="text" autocomplete="off"></label>
                 <label for="obsPort"><span>Port</span><input id="obsPort" type="number" min="1" max="65535"></label>
                 <label class="span-2" for="obsPassword"><span>Password <small class="session-only">SESSION ONLY</small></span><input id="obsPassword" type="password" autocomplete="current-password"></label>
-                <label class="span-2" for="obsSourceName"><span>Dynamic Source Name</span><input id="obsSourceName" type="text" maxlength="160"></label>
-                <label for="obsWidth"><span>Width</span><input id="obsWidth" type="number" min="320" max="7680"></label>
-                <label for="obsHeight"><span>Height</span><input id="obsHeight" type="number" min="180" max="4320"></label>
               </div>
-              <button class="btn primary full" id="obsConnectBtn" type="submit"><span id="obsConnectLabel">Connect OBS</span></button>
+              <button class="btn primary full" id="obsConnectBtn" type="submit"><span id="obsConnectLabel">เชื่อมต่อ OBS</span></button>
             </form>
-            <div class="obs-action-grid">
-              <button class="btn secondary" id="createSourceBtn" type="button">สร้าง/อัปเดต Live Source</button>
-              <button class="btn secondary" id="refreshSourceBtn" type="button">Refresh Source</button>
-              <button class="btn secondary" id="showSourceBtn" type="button">แสดง Scene Item</button>
-              <button class="btn secondary" id="hideSourceBtn" type="button">ซ่อน Scene Item</button>
-            </div>
+            <details class="inline-advanced">
+              <summary>ตั้งค่า Source และเครื่องมือขั้นสูง</summary>
+              <div class="form-grid">
+                <label class="span-2" for="obsSourceName"><span>ชื่อ Live Source</span><input id="obsSourceName" type="text" maxlength="160"></label>
+                <label for="obsWidth"><span>ความกว้าง</span><input id="obsWidth" type="number" min="320" max="7680"></label>
+                <label for="obsHeight"><span>ความสูง</span><input id="obsHeight" type="number" min="180" max="4320"></label>
+              </div>
+              <div class="obs-action-grid">
+                <button class="btn secondary" id="createSourceBtn" type="button">สร้าง/อัปเดต Live Source</button>
+                <button class="btn secondary" id="refreshSourceBtn" type="button">โหลด Source ใหม่</button>
+                <button class="btn secondary" id="showSourceBtn" type="button">แสดง Scene Item</button>
+                <button class="btn secondary" id="hideSourceBtn" type="button">ซ่อน Scene Item</button>
+              </div>
+            </details>
           </section>
 
           <section class="panel">
@@ -329,19 +349,22 @@
             <div class="backup-grid">
               <button class="backup-card" id="exportProjectBtn" type="button"><span aria-hidden="true">⇩</span><strong>Export Project</strong><small>รวม state, Groups, Playlists, Mode settings และรูป</small></button>
               <label class="backup-card" for="importProjectInput"><input id="importProjectInput" type="file" accept="application/json,.json"><span aria-hidden="true">⇧</span><strong>Import Project</strong><small>ตรวจข้อมูลและ rollback หากเขียนรูปไม่ครบ</small></label>
-              <button class="backup-card" id="loadSampleBtn" type="button"><span aria-hidden="true">✦</span><strong>โหลดข้อมูลตัวอย่าง</strong><small>สร้าง Sponsor สำหรับลองทุกโหมด</small></button>
             </div>
           </section>
 
-          <section class="panel support-panel">
-            <div><span class="panel-kicker">PEPSLIVE</span><h2>สนับสนุนโปรเจกต์</h2><p>PepsLive Sponsor Dock สำหรับงานไลฟ์กีฬาและ OBS</p></div>
-            <a class="btn secondary" href="https://heylink.me/pepslive/" target="_blank" rel="noopener">เปิดหน้าสนับสนุน</a>
-          </section>
+          <details class="panel action-menu">
+            <summary>เครื่องมือทดสอบและขั้นสูง</summary>
+            <p class="hint-text">ใช้เฉพาะเมื่อต้องการทดสอบระบบหรือกู้ข้อมูลจากเวอร์ชันเดิม</p>
+            <button class="btn secondary" id="loadSampleBtn" type="button">โหลดข้อมูลตัวอย่าง</button>
+          </details>
 
-          <section class="panel danger-zone">
-            <div><h2>Danger Zone</h2><p>ล้าง Groups, Playlists, Mode settings และรูปทั้งหมดใน browser profile นี้</p></div>
+          <details class="panel action-menu danger-zone">
+            <summary>พื้นที่อันตราย</summary>
+            <p>ล้าง Groups, Playlists, Mode settings และรูปทั้งหมดใน browser profile นี้</p>
             <button class="btn danger" id="resetProjectBtn" type="button">Reset โปรเจกต์ทั้งหมด</button>
-          </section>
+          </details>
+
+          <footer class="support-footer">PepsLive Sponsor Dock · <a href="https://heylink.me/pepslive/" target="_blank" rel="noopener">สนับสนุนโปรเจกต์</a></footer>
         </section>
       </main>
 
