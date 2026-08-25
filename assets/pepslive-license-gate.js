@@ -117,6 +117,10 @@
     return ADMIN_EMAILS.has(String(user?.email || '').trim().toLowerCase());
   }
 
+  function usableUser(user) {
+    return user && !user.isAnonymous && String(user.email || '').trim() ? user : null;
+  }
+
   function contactAdmin(detail) {
     return `${detail ? `${detail} ` : ''}กรุณาติดต่อแอดมิน`;
   }
@@ -255,10 +259,11 @@
     try {
       const modules = await loadFirebase();
       modules.onAuthStateChanged(auth, (user) => {
-        currentUser = user;
+        currentUser = usableUser(user);
         updateIdentity();
-        if (logoutButton) logoutButton.hidden = !user;
-        if (loginButton) loginButton.hidden = !!user;
+        if (logoutButton) logoutButton.hidden = !currentUser;
+        if (loginButton) loginButton.hidden = !!currentUser;
+        if (user && !currentUser) void modules.signOut(auth).catch(() => {});
         void refreshAccess();
       });
       setStatus('รอการเข้าสู่ระบบ', 'ใช้บัญชี Google เดียวกับ PepsLiveTool Launcher');
