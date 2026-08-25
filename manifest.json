@@ -4,6 +4,7 @@
   "files": [
     "CHANGELOG.md",
     "README.md",
+    "assets/pepslive-license-gate.js",
     "assets/sponsor-control.js",
     "assets/sponsor-display.js",
     "assets/sponsor-mode-registry.js",
