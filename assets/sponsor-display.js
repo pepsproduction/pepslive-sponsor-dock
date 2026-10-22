@@ -37,6 +37,7 @@
   let lastCommandId = "";
   let lastCommandTs = 0;
   let lastContext = null;
+  let previewSuspended = false;
 
   function normalizeIndex(index, length) {
     if (!length) return 0;
@@ -175,6 +176,10 @@
       rendererCleanup();
       rendererCleanup = null;
     }
+    if (isPreview && previewSuspended) {
+      layer.replaceChildren();
+      return;
+    }
 
     const context = resolveContext();
     lastContext = context;
@@ -243,6 +248,25 @@
     broadcastPlayback(context, renderedIndex);
     scheduleAuto(context, renderedIndex);
   }
+
+  window.addEventListener("message", (event) => {
+    if (
+      !isPreview
+      || event.source !== parent
+      || event.origin !== location.origin
+      || event.data?.type !== "peps-sponsor-preview-suspend"
+    ) return;
+    const suspended = event.data.suspended === true;
+    if (previewSuspended === suspended) return;
+    previewSuspended = suspended;
+    if (previewSuspended) {
+      clearRuntime();
+      layer.replaceChildren();
+      return;
+    }
+    armEffectTimer();
+    render();
+  });
 
   function armEffectTimer() {
     clearTimeout(effectTimer);

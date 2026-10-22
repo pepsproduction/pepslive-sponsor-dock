@@ -3425,3 +3425,180 @@ body.display-page {
     transition-duration: 1ms !important;
   }
 }
+
+/* Compact preparation flow and low-cost operator surfaces. */
+body.control-page::before {
+  display: none;
+}
+
+body.control-page .app-header,
+body.control-page .workspace-nav,
+body.control-page .library-switcher {
+  background: #10131a;
+  backdrop-filter: none;
+}
+
+body.control-page .app-header {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+}
+
+.workspace-nav {
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.nav-item-utility {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.nav-item-utility .nav-glyph {
+  font-size: 13px;
+}
+
+.nav-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 4px;
+  background: var(--line-strong);
+}
+
+.library-switcher {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+
+.library-switcher .setup-step {
+  display: flex;
+  min-width: 0;
+  min-height: 58px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 11px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  text-align: left;
+}
+
+.setup-step-index {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.setup-step > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.setup-step strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-step small {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-switcher .setup-step.is-active {
+  border-color: rgba(255, 122, 24, 0.25);
+  background: linear-gradient(130deg, rgba(255, 122, 24, 0.16), rgba(255, 159, 67, 0.055));
+}
+
+.setup-step.is-active .setup-step-index {
+  border-color: rgba(255, 159, 67, 0.5);
+  color: #17100a;
+  background: var(--orange-2);
+}
+
+.library-switcher .setup-step-advanced {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.setup-step-advanced > span:first-child {
+  color: var(--muted-2);
+  font-size: 16px;
+}
+
+.upload-destination {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preview-actions .icon-button[aria-pressed="true"] {
+  border-color: rgba(255, 159, 67, 0.38);
+  color: var(--orange-2);
+  background: var(--orange-soft);
+}
+
+.mode-card-top code {
+  display: none;
+}
+
+.mode-card.is-active {
+  box-shadow: inset 0 0 0 1px rgba(255, 122, 24, 0.18), 0 12px 34px rgba(255, 122, 24, 0.1);
+}
+
+@media (max-width: 760px) {
+  .library-switcher {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .library-switcher .setup-step-advanced {
+    grid-column: span 2;
+  }
+
+  .nav-item-utility {
+    padding-inline: 8px;
+  }
+}
+
+@media (max-width: 500px) {
+  .nav-divider {
+    display: none;
+  }
+
+  .workspace-nav {
+    gap: 5px;
+  }
+
+  .nav-item-utility {
+    min-height: 38px;
+    padding: 7px;
+    font-size: 10px;
+  }
+
+  .library-switcher {
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .library-switcher .setup-step {
+    min-height: 54px;
+    gap: 8px;
+    padding: 7px;
+  }
+}

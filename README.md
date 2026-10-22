@@ -1,10 +1,10 @@
 # PepsLive Sponsor Dock
 
-รุ่น 2.0.0 รวมระบบ Sponsor สำหรับ OBS โดยยึดฟังก์ชันจาก
+รุ่น 2.1.0 รวมระบบ Sponsor สำหรับ OBS โดยยึดฟังก์ชันจาก
 `pepsproduction/pepslive-sponsor-dock` เป็นหลัก แล้วจัด UX/UI และโครงสร้างการทำงานใหม่
 ให้ใช้ง่ายขึ้นโดยยังคงธีมดำ–ส้มของ PepsLive
 
-> Release 2.0.0 — ผ่าน automated regression และพร้อมใช้งานบน GitHub Pages/OBS Browser Source
+> Release 2.1.0 — ผ่าน automated regression ครบ 21 โหมด; โครงสร้าง URL และ asset ยังคงรองรับ GitHub Pages/OBS Browser Source
 
 ## สิ่งที่รวมไว้
 
@@ -20,7 +20,7 @@
 
 ## หน้าหลัก
 
-- `sponsor-control.html` — หน้า Control แบ่งเป็น Live, Sponsors, Collections, Modes และ Settings
+- `sponsor-control.html` — หน้า Control แยกงานหลักเป็น เตรียมงาน และควบคุมสด พร้อมรูปแบบแสดงผลและตั้งค่า OBS
 - `sponsor-display.html` — หน้า Display โปร่งใสสำหรับ OBS
 - `sponsor.html` — Compatibility route สำหรับ URL เดิม
 - `assets/sponsor-mode-registry.js` — รายชื่อ, ค่าเริ่มต้น และ controls ของ 21 โหมด
@@ -59,13 +59,13 @@ URL เดิมของ 14 โหมดจาก GitHub ยังใช้ ID 
 
 ## Workflow ที่แนะนำ
 
-1. เปิดหน้า Control แล้วไปที่ **Sponsors** เพื่ออัปโหลด PNG, JPG, WebP หรือ SVG
-2. จัด Sponsor เป็น **Groups** สำหรับ Source แบบคงที่
-3. จัด **Playlists** สำหรับลำดับระหว่าง Live
-4. ปรับโหมดและค่ารายโหมดใน **Modes**
-5. ทดสอบ Show/Hide, Next/Pause และ Trigger ใน **Live**
-6. ใช้ URL `mode=live` เป็น Browser Source หลักสำหรับหน้างาน
-7. Export Project เก็บเป็น Backup ก่อนเริ่มงานจริง
+1. เปิด **รูปแบบแสดงผล** แล้วเลือกหนึ่งในรูปแบบแนะนำ 5 แบบ ชุดที่เลือกอยู่จะใช้รูปแบบนี้ทันที
+2. ใน **เตรียมงาน** ลาก PNG, JPG, WebP หรือ SVG มาวาง โลโก้จะถูกเพิ่มเข้าชุดและ Group ที่เลือกอยู่โดยอัตโนมัติ
+3. เปิดขั้น **ชุดที่เล่น** เพื่อจัดลำดับและเวลาต่อโลโก้ หากไม่ต้องปรับเพิ่มก็เริ่มควบคุมสดได้เลย
+4. ใน **ควบคุมสด** ตรวจชื่อ Sponsor แล้วสั่งแสดง ซ่อน พัก หรือเปลี่ยนรายการ
+5. ใช้ URL `mode=live` เป็น Browser Source หลัก และ Export Project เพื่อสำรองงาน
+
+การ Preview สามารถพักด้วยปุ่ม `Ⅱ` และจะหยุดเมื่อซ่อนหน้าต่าง Control เพื่อไม่ให้เรนเดอร์ภาพซ้ำโดยไม่จำเป็น
 
 ## เปิดทดสอบ Local
 
