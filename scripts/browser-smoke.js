@@ -862,6 +862,7 @@ async function readLogoSurfaceAudit(cdp, mode) {
       broadcast_ticker: [".psm-broadcast-ticker"],
       grid_board: [".psm-board-card"],
       sponsor_break: [".psm-break-card"],
+      cover3d: [".psm-cover-card"],
       goal_popup: [".psm-goal-card"]
     }[mode] || [];
     const colorHasAlpha = (value) => {
@@ -1114,6 +1115,94 @@ async function seedCapacityProject(cdp) {
   })()`);
 }
 
+async function seedCoverCapacityProject(cdp, count = 100) {
+  return cdp.evaluate(`(async () => {
+    const count = ${JSON.stringify(count)};
+    const colors = ["#ff620f", "#00a9d6", "#7c3aed", "#16a34a", "#e11d48", "#d97706", "#2563eb", "#0891b2"];
+    const sponsors = Array.from({ length: count }, (_, index) => {
+      const id = "cover_perf_" + String(index + 1).padStart(3, "0");
+      const name = "Cover Partner " + (index + 1);
+      const color = colors[index % colors.length];
+      const svg = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">',
+        '<rect width="320" height="160" rx="24" fill="#10141d"/>',
+        '<rect x="8" y="8" width="304" height="144" rx="20" fill="' + color + '"/>',
+        '<text x="160" y="92" text-anchor="middle" font-family="Arial" font-size="26" font-weight="700" fill="#fff">' + name + '</text>',
+        '</svg>'
+      ].join("");
+      return { id, name, color, blob: new Blob([svg], { type: "image/svg+xml" }) };
+    });
+
+    await PepsSponsor.dbClearImages();
+    for (const sponsor of sponsors) {
+      await PepsSponsor.dbPutImage(sponsor.id, sponsor.blob, {
+        name: sponsor.id + ".svg",
+        type: "image/svg+xml"
+      });
+    }
+
+    const groupId = "group_cover_performance";
+    const state = PepsSponsor.defaultState();
+    const ids = sponsors.map((sponsor) => sponsor.id);
+    state.projectName = "Cover3D Capacity Performance Regression";
+    state.mode = "cover3d";
+    state.activeGroupId = groupId;
+    state.activePlaylist = "pl_cover_performance";
+    state.images = sponsors.map(({ id, name }) => ({
+      id,
+      name,
+      tier: "partner",
+      duration: 2,
+      enabled: true,
+      createdAt: "2026-07-17T00:00:00.000Z"
+    }));
+    state.groups = [
+      { id: "all", name: "All Cover Partners", imageIds: [...ids] },
+      { id: groupId, name: "Cover Performance Group", imageIds: [...ids] }
+    ];
+    state.playlists = [{
+      id: "pl_cover_performance",
+      name: "Cover Performance Playback",
+      mode: "cover3d",
+      groupId,
+      defaultDuration: 2,
+      sponsorIds: [...ids]
+    }];
+    state.modeGroups = Object.fromEntries(
+      PepsSponsorModes.ids.map((mode) => [mode, groupId])
+    );
+    state.modeSettings = Object.fromEntries(
+      PepsSponsorModes.ids.map((mode) => [mode, PepsSponsorModes.defaultsFor(mode)])
+    );
+    state.modeSettings.cover3d.coverSpeed = 500;
+    state.settings = {
+      autoPlay: false,
+      safeArea: false,
+      showNames: true,
+      showTier: false,
+      opacity: 100
+    };
+    state.isVisible = true;
+    state.isPaused = false;
+    state.currentIndex = 0;
+    state.command = {
+      id: "cmd_cover_performance_seed",
+      type: "init",
+      ts: 3,
+      payload: {}
+    };
+    const saved = await PepsSponsor.saveStateLocked(state, {
+      replace: true,
+      silent: true
+    });
+    return {
+      images: saved.images.length,
+      groupSponsors: PepsSponsor.getGroupSponsors(saved, groupId).length,
+      groupId
+    };
+  })()`);
+}
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
@@ -1198,8 +1287,29 @@ async function main() {
     await waitFor(
       () => cdp.evaluate(`typeof PepsSponsor === "object"
         && typeof PepsSponsorModes === "object"
-        && document.querySelectorAll("#modeLibrary .mode-card").length === 7`),
+        && document.querySelectorAll("#modeLibrary .mode-card").length === 5`),
       "control application initialization"
+    );
+    const preparationStart = await cdp.evaluate(`({
+      activeView: document.body.dataset.activeView,
+      logoStepVisible: !document.getElementById("view-sponsors").hidden,
+      setupSteps: document.querySelectorAll("#librarySwitcher .setup-step").length,
+      uploadTargetHidden: document.querySelector(".upload-target-row").hidden
+    })`);
+    assert(preparationStart.activeView === "library", "Control must open on the preparation workspace");
+    assert(preparationStart.logoStepVisible, "Preparation must open on the logo step");
+    assert(preparationStart.setupSteps === 4, "Preparation must expose three steps and one advanced action");
+    assert(preparationStart.uploadTargetHidden, "New logos must use the selected set without extra target choices");
+    await cdp.evaluate(`document.getElementById("pausePreviewBtn").click()`);
+    const pausedPreview = await cdp.evaluate(`({
+      src: document.getElementById("previewFrame").getAttribute("src"),
+      paused: document.getElementById("pausePreviewBtn").getAttribute("aria-pressed")
+    })`);
+    assert(pausedPreview.src !== "about:blank" && pausedPreview.paused === "true", "Preview pause must stop rendering without navigating its frame");
+    await cdp.evaluate(`document.getElementById("pausePreviewBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`new URL(document.getElementById("previewFrame").src).searchParams.get("preview") === "1"`),
+      "resumed preparation preview"
     );
     const controlRoute = await cdp.evaluate(`({
       pathname: location.pathname,
@@ -1613,10 +1723,46 @@ async function main() {
       ids: [...document.querySelectorAll("#modeLibrary .mode-card")].map((card) => card.dataset.mode)
     }))()`);
     assert(recommendedModes.filter === "recommended", "Mode Library must open with recommended modes");
-    assert(recommendedModes.ids.length === 7, "Mode Library must show 7 recommended modes first");
-    for (const id of ["lower_third", "rotator", "broadcast_ticker", "corner_badge", "side_tower", "sponsor_break", "goal_popup"]) {
+    assert(recommendedModes.ids.length === 5, "Mode Library must show 5 recommended modes first");
+    for (const id of ["lower_third", "corner_badge", "cover3d", "grid_board", "sponsor_break"]) {
       assert(recommendedModes.ids.includes(id), `Recommended Mode Library is missing ${id}`);
     }
+    await cdp.evaluate(`document.querySelector('#modeLibrary [data-mode="cover3d"]').click()`);
+    await waitFor(
+      () => cdp.evaluate(`PepsSponsor.loadState().playlists.find((item) => item.id === PepsSponsor.loadState().activePlaylist)?.mode === "cover3d"`),
+      "mode selection updating the active Sponsor set"
+    );
+    await cdp.evaluate(`document.querySelector('#modeLibrary [data-mode="lower_third"]').click()`);
+    await waitFor(
+      () => cdp.evaluate(`PepsSponsor.loadState().playlists.find((item) => item.id === PepsSponsor.loadState().activePlaylist)?.mode === "lower_third"`),
+      "restored default mode after preparation-flow check"
+    );
+    await waitFor(
+      () => cdp.evaluate(`(() => {
+        const frame = document.getElementById("previewFrame");
+        const logo = frame.contentDocument?.querySelector("#sponsorLayer img.psm-logo");
+        return !!logo && logo.complete && logo.naturalWidth > 0;
+      })()`),
+      "loaded preparation preview before suspension"
+    );
+    const previewSource = await cdp.evaluate(`document.getElementById("previewFrame").src`);
+    await cdp.evaluate(`document.getElementById("pausePreviewBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`document.getElementById("previewFrame").contentDocument?.querySelectorAll("#sponsorLayer img.psm-logo").length === 0`),
+      "suspended preview renderer"
+    );
+    assert(
+      await cdp.evaluate(`document.getElementById("previewFrame").src`) === previewSource,
+      "Suspending Preview must leave the iframe route intact"
+    );
+    await cdp.evaluate(`document.getElementById("pausePreviewBtn").click()`);
+    await waitFor(
+      () => cdp.evaluate(`(() => {
+        const logo = document.getElementById("previewFrame").contentDocument?.querySelector("#sponsorLayer img.psm-logo");
+        return !!logo && logo.complete && logo.naturalWidth > 0;
+      })()`),
+      "resumed preparation preview renderer"
+    );
     await cdp.evaluate(`(() => {
       const filter = document.getElementById("modeCategoryFilter");
       filter.value = "all";
@@ -1722,18 +1868,31 @@ async function main() {
     }
 
     await chooseImportFixture(cdp, exported.path, "v4 round-trip import");
+    let importDiagnostic = null;
     await waitFor(
-      () => cdp.evaluate(`(() => {
+      async () => {
+        importDiagnostic = await cdp.evaluate(`(() => {
         const state = PepsSponsor.loadState();
         const ids = state.images.map((image) => image.id);
-        return state.command.type === "import"
+        return {
+          imported: state.command.type === "import"
           && state.projectName === "Unified 21 Mode Regression"
           && ids.length === 2
           && !ids.includes("img_alpha")
-          && !ids.includes("img_beta");
-      })()`),
+          && !ids.includes("img_beta"),
+          projectName: state.projectName,
+          command: state.command.type,
+          imageCount: ids.length,
+          toast: document.getElementById("toastRegion")?.innerText || "",
+          saveStatus: document.getElementById("saveStatus")?.innerText || ""
+        };
+      })()`);
+        return importDiagnostic.imported;
+      },
       "successful v4 import with remapped IDs"
-    );
+    ).catch((error) => {
+      throw new Error(`${error.message} Import state: ${JSON.stringify(importDiagnostic)}`);
+    });
     const importedV4 = await cdp.evaluate(`(async () => {
       const state = PepsSponsor.loadState();
       const alpha = state.images.find((image) => image.name === "Alpha Sponsor");
@@ -3187,6 +3346,122 @@ async function main() {
         `Cover3D must retain a genuinely visible loaded logo at 320x180: ${JSON.stringify(compactCover)}`
       );
 
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1,
+        mobile: false
+      });
+      const coverCapacity = await seedCoverCapacityProject(cdp, 100);
+      assert(
+        coverCapacity.images === 100 && coverCapacity.groupSponsors === 100,
+        `Cover3D capacity fixture must contain 100 Sponsors: ${JSON.stringify(coverCapacity)}`
+      );
+      const coverCapacityMarker = cdp.events.length;
+      await navigate(
+        cdp,
+        origin,
+        "/sponsor.html?mode=live&qa=bounded-cover-capacity",
+        (location) => location.pathname.endsWith("/sponsor-display.html")
+          && new URL(location.href).searchParams.get("mode") === "live",
+        "100-sponsor Cover3D output"
+      );
+      await waitFor(
+        () => cdp.evaluate(`document.getElementById("sponsorLayer")?.dataset.renderer === "cover3d"
+          && document.querySelectorAll(".psm-cover-card").length === 7
+          && [...document.querySelectorAll(".psm-cover-card img.psm-logo")].every((image) => image.complete && image.naturalWidth > 0)`),
+        "bounded 3D card window for 100 Sponsors"
+      );
+      const coverCapacityOutput = await cdp.evaluate(`(async () => {
+        const state = await PepsSponsor.loadStateAuthoritative();
+        const cards = [...document.querySelectorAll(".psm-cover-card")];
+        return {
+          groupSponsors: PepsSponsor.getGroupSponsors(state, "group_cover_performance").length,
+          renderedCards: cards.length,
+          loadedCards: cards.filter((card) => card.querySelector("img.psm-logo")?.naturalWidth > 0).length
+        };
+      })()`);
+      assert(
+        coverCapacityOutput.groupSponsors === 100
+          && coverCapacityOutput.renderedCards === 7
+          && coverCapacityOutput.loadedCards === 7,
+        `Cover3D must keep its visible card pool bounded while loading 100 Sponsors: ${JSON.stringify(coverCapacityOutput)}`
+      );
+      let advancedCoverName = "";
+      await waitFor(async () => {
+        advancedCoverName = await readModeCycleIdentity(cdp, "cover3d");
+        return /^Cover Partner (1[0-9]|[2-9][0-9]|100)$/.test(advancedCoverName);
+      }, "bounded Cover3D carousel to reach Sponsors beyond the initial window", 7000);
+      const coverCommandLatency = await cdp.evaluate(`(async () => {
+        const samples = [];
+        for (let index = 10; index < 30; index += 1) {
+          const state = await PepsSponsor.loadStateAuthoritative();
+          state.currentIndex = index;
+          state.modeSettings.cover3d.coverSpeed = 5000;
+          state.command = {
+            id: "cmd_cover_latency_" + index + "_" + Date.now(),
+            type: "next",
+            ts: Date.now(),
+            payload: {}
+          };
+          const saved = await PepsSponsor.saveStateLocked(state, {
+            replace: true,
+            silent: true
+          });
+          const expectedName = "Cover Partner " + (index + 1);
+          const startedAt = performance.now();
+          PepsSponsor.broadcast({
+            type: "command",
+            command: saved.command,
+            state: saved
+          });
+          const elapsed = await new Promise((resolve) => {
+            const layer = document.getElementById("sponsorLayer");
+            let timer = 0;
+            const check = () => {
+              const active = [...document.querySelectorAll(".psm-cover-card")]
+                .find((card) => card.classList.contains("is-active"))
+                ?.querySelector("img.psm-logo")?.alt;
+              if (active !== expectedName) return;
+              observer.disconnect();
+              clearTimeout(timer);
+              resolve(performance.now() - startedAt);
+            };
+            const observer = new MutationObserver(check);
+            observer.observe(layer, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              attributeFilter: ["class", "src", "alt"]
+            });
+            timer = setTimeout(() => {
+              observer.disconnect();
+              resolve(-1);
+            }, 2500);
+            check();
+          });
+          samples.push(elapsed);
+          if (elapsed < 0) break;
+        }
+        const sorted = [...samples].sort((left, right) => left - right);
+        return {
+          samples,
+          p95Ms: sorted.length ? sorted[Math.ceil(sorted.length * 0.95) - 1] : -1,
+          maxMs: sorted.length ? sorted[sorted.length - 1] : -1
+        };
+      })()`);
+      assert(
+        coverCommandLatency.samples.length === 20
+          && coverCommandLatency.samples.every((sample) => sample >= 0)
+          && coverCommandLatency.p95Ms < 100,
+        `Warmed 100-sponsor Cover3D command latency must stay under 100ms p95: ${JSON.stringify(coverCommandLatency)}`
+      );
+      console.log(
+        `Warmed 100-sponsor Cover3D command latency: p95 ${coverCommandLatency.p95Ms.toFixed(1)} ms, `
+        + `max ${coverCommandLatency.maxMs.toFixed(1)} ms across ${coverCommandLatency.samples.length} actions.`
+      );
+      assertNoBrowserErrors(cdp, coverCapacityMarker, "100-sponsor bounded Cover3D playback");
+
       await seedCapacityProject(cdp);
       await cdp.evaluate(`(async () => {
         const bytes = new Uint8Array([
@@ -4254,7 +4529,7 @@ async function main() {
     console.log(
       `Unified browser regression passed `
       + `(21 modes, routes, groups/playlists, redesign recovery, playlist audit, `
-      + `capacity playback, import/export, sample rollback, multi-tab locking, BFCache lifecycle, `
+      + `capacity playback, 100-sponsor bounded 3D, import/export, sample rollback, multi-tab locking, BFCache lifecycle, `
       + `fake OBS, transparency, rapid switching).`
     );
   } catch (error) {

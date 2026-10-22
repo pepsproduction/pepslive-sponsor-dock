@@ -160,10 +160,10 @@
     },
     {
       id: "cover3d",
-      label: "แบบ 3D Cover Flow",
-      shortLabel: "3D Cover Flow",
+      label: "การ์ดสปอนเซอร์ 3 มิติ",
+      shortLabel: "3D Cards",
       category: "showcase",
-      description: "จัดโลโก้เป็นคารูเซลสามมิติพร้อมมิติความลึก",
+      description: "วางโลโก้เป็นการ์ดซ้อนชั้น มีระยะลึกและแสงขอบแบบงานถ่ายทอดสด",
       defaults: {
         coverSpeed: 1600,
         coverOpacity: 0.35,

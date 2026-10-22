@@ -11,7 +11,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2310141c'/%3E%3Cpath d='M15 45 24 18h7l-9 27zm14 0 9-27h7l-9 27zm14 0 6-18h7l-6 18z' fill='%23ff7a18'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="./assets/sponsor.css">
 </head>
-<body class="control-page" data-active-view="live" data-pepslive-tool="sponsor-dock">
+<body class="control-page" data-active-view="library" data-pepslive-tool="sponsor-dock">
   <div class="app-shell">
     <header class="app-header">
       <button class="brand brand-button" id="brandHome" type="button" aria-label="กลับหน้า Live">
@@ -34,27 +34,37 @@
     </header>
 
     <nav class="workspace-nav" role="tablist" aria-label="พื้นที่ทำงาน">
+      <button class="nav-item" id="tab-library" type="button" role="tab" aria-selected="false" aria-controls="librarySwitcher view-sponsors view-collections" data-view="library">
+        <span class="nav-glyph" aria-hidden="true">▦</span><span>เตรียมงาน</span>
+        <span class="nav-count" id="navSponsorCount">0</span>
+      </button>
       <button class="nav-item is-active" id="tab-live" type="button" role="tab" aria-selected="true" aria-controls="view-live" data-view="live">
         <span class="nav-glyph" aria-hidden="true">●</span><span>ควบคุมสด</span>
       </button>
-      <button class="nav-item" id="tab-library" type="button" role="tab" aria-selected="false" aria-controls="librarySwitcher view-sponsors view-collections" data-view="library">
-        <span class="nav-glyph" aria-hidden="true">▦</span><span>โลโก้และชุด</span>
-        <span class="nav-count" id="navSponsorCount">0</span>
-      </button>
-      <button class="nav-item" id="tab-modes" type="button" role="tab" aria-selected="false" aria-controls="view-modes" data-view="modes">
+      <span class="nav-divider" aria-hidden="true"></span>
+      <button class="nav-item nav-item-utility" id="tab-modes" type="button" role="tab" aria-selected="false" aria-controls="view-modes" data-view="modes">
         <span class="nav-glyph" aria-hidden="true">◆</span><span>รูปแบบแสดงผล</span>
       </button>
-      <button class="nav-item" id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="view-settings" data-view="settings">
+      <button class="nav-item nav-item-utility" id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="view-settings" data-view="settings">
         <span class="nav-glyph" aria-hidden="true">⚙</span><span>ระบบ OBS</span>
       </button>
     </nav>
 
     <div class="workspace-layout">
       <main class="workspace-main">
-        <nav class="library-switcher" id="librarySwitcher" aria-label="ส่วนของโลโก้และชุด" hidden>
-          <button class="is-active" type="button" data-library-section="logos" aria-pressed="true">คลังโลโก้</button>
-          <button type="button" data-library-section="playlists" aria-pressed="false">ชุดสปอนเซอร์</button>
-          <button type="button" data-library-section="groups" aria-pressed="false">กลุ่ม Source คงที่</button>
+        <nav class="library-switcher" id="librarySwitcher" aria-label="ขั้นตอนเตรียมงาน" hidden>
+          <button class="setup-step" type="button" data-view="modes" aria-label="ขั้นที่ 1 เลือกรูปแบบ">
+            <span class="setup-step-index">01</span><span><strong>รูปแบบ</strong><small id="quickModeLabel">เลือกแบบแสดงผล</small></span>
+          </button>
+          <button class="setup-step is-active" type="button" data-library-section="logos" aria-current="step">
+            <span class="setup-step-index">02</span><span><strong>โลโก้</strong><small><b id="quickLogoCount">0</b> รายการในคลัง</small></span>
+          </button>
+          <button class="setup-step" type="button" data-library-section="playlists">
+            <span class="setup-step-index">03</span><span><strong>ชุดที่เล่น</strong><small id="quickPlaylistName">ค่าเริ่มต้น</small></span>
+          </button>
+          <button class="setup-step setup-step-advanced" type="button" data-library-section="groups" title="ตั้งค่า Group และ URL แบบคงที่">
+            <span aria-hidden="true">⚙</span><span><strong>กลุ่มขั้นสูง</strong><small>Source คงที่</small></span>
+          </button>
         </nav>
         <section class="workspace-view is-active" id="view-live" role="tabpanel" aria-labelledby="tab-live" data-view-panel="live">
           <div class="section-intro">
@@ -132,8 +142,8 @@
           <div class="section-intro">
             <div>
               <p class="eyebrow">SPONSOR LIBRARY</p>
-              <h1>คลังโลโก้กลาง</h1>
-              <p>อัปโหลดครั้งเดียว แล้วนำ Sponsor ไปใช้ซ้ำได้ทั้ง Group, Playlist และทุกโหมดแสดงผล</p>
+              <h1>เตรียมผู้สนับสนุน</h1>
+              <p>เพิ่มโลโก้ได้เลย ระบบจะใส่เข้า Group และชุดที่เลือกอยู่ให้อัตโนมัติ</p>
             </div>
             <span class="library-stat"><strong id="libraryCount">0</strong> SPONSORS</span>
           </div>
@@ -144,7 +154,8 @@
               <span class="upload-icon" aria-hidden="true">＋</span>
               <span><strong>ลากโลโก้มาวาง หรือกดเลือกไฟล์</strong><small>PNG, JPG, WebP, SVG — ไม่เกิน 12 MB ต่อไฟล์</small></span>
             </label>
-            <div class="upload-target-row">
+            <div class="upload-destination" id="uploadDestination" role="status">เพิ่มโลโก้ในชุดที่กำลังเลือก</div>
+            <div class="upload-target-row" hidden aria-hidden="true">
               <label for="uploadGroup"><span>เพิ่มเข้า Group</span><select id="uploadGroup"></select></label>
               <label for="uploadPlaylist"><span>เพิ่มเข้า Playlist</span><select id="uploadPlaylist"></select></label>
             </div>
@@ -228,20 +239,21 @@
           <div class="section-intro">
             <div>
               <p class="eyebrow">MODE STUDIO</p>
-              <h1>21 โหมดแสดงผลในระบบเดียว</h1>
-              <p>คง 14 โหมดจาก GitHub v3 และเพิ่ม 7 โหมดสำหรับงาน Broadcast โดยแยกค่าของแต่ละโหมดอิสระ</p>
+              <h1>เลือกรูปแบบแสดงผล</h1>
+              <p>เลือกรูปแบบที่เหมาะกับรายการ ตัวเลือกนี้จะใช้กับชุดสปอนเซอร์ที่กำลังเล่น</p>
             </div>
             <label class="compact-filter" for="modeCategoryFilter"><span class="sr-only">กรองหมวดโหมด</span>
               <select id="modeCategoryFilter">
-                <option value="recommended">โหมดแนะนำ (7)</option>
-                <option value="additional">โหมดเพิ่มเติม (3)</option>
-                <option value="legacy">โหมดเก่าและโหมดทดลอง (11)</option>
+                <option value="recommended">แนะนำสำหรับงานทั่วไป (5)</option>
+                <option value="additional">รูปแบบเพิ่มเติม (6)</option>
+                <option value="legacy">รูปแบบเดิมและทดลอง (10)</option>
                 <option value="all">ทุกโหมด</option><option value="classic">Classic</option>
                 <option value="motion">Motion</option><option value="playful">Playful</option>
                 <option value="showcase">Showcase</option><option value="broadcast">Broadcast</option>
                 <option value="event">Event</option>
               </select>
             </label>
+            <button class="btn primary compact" id="returnToPrepareBtn" type="button">กลับไปเตรียมงาน</button>
           </div>
 
           <section class="panel">
@@ -368,12 +380,13 @@
         </section>
       </main>
 
-      <aside class="preview-rail" aria-label="Live Preview">
+      <aside class="preview-rail" aria-label="ตัวอย่างภาพ Sponsor">
         <section class="preview-card">
           <div class="preview-head">
-            <div><span class="preview-label"><i></i> LIVE PREVIEW</span><strong id="previewModeLabel">Auto Output</strong></div>
+            <div><span class="preview-label"><i></i> ตัวอย่างภาพ</span><strong id="previewModeLabel">Auto Output</strong></div>
             <div class="preview-actions">
               <a class="icon-button" id="openPreviewDisplay" href="./sponsor-display.html?mode=live" target="_blank" rel="noopener" aria-label="เปิด Display เต็มหน้าจอ">↗</a>
+              <button class="icon-button" id="pausePreviewBtn" type="button" aria-pressed="false" aria-label="หยุดภาพตัวอย่างเพื่อลดการใช้ทรัพยากร" title="หยุดภาพตัวอย่าง">Ⅱ</button>
               <button class="icon-button" id="reloadPreviewBtn" type="button" aria-label="Reload Preview">↻</button>
             </div>
           </div>
@@ -420,7 +433,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./assets/pepslive-license-gate.js?v=license-v3-20260825"></script>
+  <script src="./assets/pepslive-license-gate.js?v=license-v3-20260909-pending-admin1"></script>
   <script src="./assets/sponsor-mode-registry.js"></script>
   <script src="./assets/sponsor-shared.js"></script>
   <script src="./assets/sponsor-control.js"></script>

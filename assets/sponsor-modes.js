@@ -4,6 +4,9 @@
   const registry = window.PepsSponsorModes;
   const activeRenderers = new WeakMap();
   const STYLE_ID = "peps-sponsor-mode-renderers-css";
+  const imageProbeCache = new Map();
+  const MAX_IMAGE_PROBES = 256;
+  const MAX_COVER_CARDS = 7;
   const TIER_LABELS = Object.freeze({
     main: "Main Sponsor",
     gold: "Gold Sponsor",
@@ -158,7 +161,46 @@
       }
       .psm-cover-card {
         position: absolute;
-        transition: transform .58s ease-out, opacity .58s ease-out;
+        display: grid;
+        min-width: 180px;
+        min-height: 152px;
+        place-items: center;
+        overflow: hidden;
+        padding: 22px 32px;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 26px;
+        background: linear-gradient(145deg, rgba(36,43,58,.95), rgba(12,15,23,.96));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 26px 58px rgba(0,0,0,.46);
+        transform-style: preserve-3d;
+        backface-visibility: hidden;
+        transition: transform .62s cubic-bezier(.2,.78,.24,1), opacity .62s ease, border-color .62s ease, box-shadow .62s ease;
+      }
+      .psm-cover-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(ellipse at 18% 0%, rgba(255,159,67,.2), transparent 58%);
+      }
+      .psm-cover-card::after {
+        content: "";
+        position: absolute;
+        right: 16%;
+        bottom: 11px;
+        left: 16%;
+        height: 2px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, transparent, rgba(255,159,67,.72), transparent);
+        opacity: .48;
+      }
+      .psm-cover-card.is-active {
+        border-color: rgba(255,159,67,.62);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 28px 66px rgba(0,0,0,.52), 0 0 28px rgba(255,122,24,.12);
+      }
+      .psm-cover-card > .psm-logo {
+        position: relative;
+        z-index: 1;
+        transform: translateZ(12px);
       }
       .psm-anim-pulse .psm-logo { animation: psmPulse var(--psm-anim-speed) ease-in-out infinite; }
       .psm-anim-spin .psm-logo { animation: psmSpin var(--psm-anim-speed) linear infinite; }
@@ -467,26 +509,36 @@
   }
 
   function imageUrlLoads(url, isValid) {
-    return new Promise((resolve) => {
-      const probe = new Image();
-      let settled = false;
-      const finish = (loaded) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        probe.onload = null;
-        probe.onerror = null;
-        resolve(loaded && isValid());
-      };
-      const timeout = setTimeout(() => finish(false), 5000);
-      probe.onload = () => finish(probe.naturalWidth > 0 && probe.naturalHeight > 0);
-      probe.onerror = () => finish(false);
-      if (!isValid()) {
-        finish(false);
-        return;
+    let loading = imageProbeCache.get(url);
+    if (loading) {
+      imageProbeCache.delete(url);
+      imageProbeCache.set(url, loading);
+    } else {
+      loading = new Promise((resolve) => {
+        const probe = new Image();
+        let settled = false;
+        const finish = (loaded) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          probe.onload = null;
+          probe.onerror = null;
+          resolve(loaded);
+        };
+        const timeout = setTimeout(() => finish(false), 5000);
+        probe.onload = () => finish(probe.naturalWidth > 0 && probe.naturalHeight > 0);
+        probe.onerror = () => finish(false);
+        probe.src = url;
+      });
+      imageProbeCache.set(url, loading);
+      while (imageProbeCache.size > MAX_IMAGE_PROBES) {
+        imageProbeCache.delete(imageProbeCache.keys().next().value);
       }
-      probe.src = url;
-    });
+      loading.then((loaded) => {
+        if (!loaded && imageProbeCache.get(url) === loading) imageProbeCache.delete(url);
+      });
+    }
+    return loading.then((loaded) => loaded && isValid());
   }
 
   function normalizeIndex(index, length) {
@@ -667,6 +719,7 @@
     const generation = context.generation;
     const timers = new Set();
     const intervals = new Set();
+    const animationFrames = new Set();
     let frame = 0;
     let alive = true;
     let disposer = null;
@@ -717,6 +770,8 @@
       intervals.forEach(clearInterval);
       timers.clear();
       intervals.clear();
+      animationFrames.forEach(cancelAnimationFrame);
+      animationFrames.clear();
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       if (activeRenderers.get(root) === disposer) activeRenderers.delete(root);
@@ -984,9 +1039,14 @@
       container.style.alignItems =
         coverY === "top" ? "flex-start" : coverY === "bottom" ? "flex-end" : "center";
       container.style.padding = `${verticalPadding}px ${horizontalPadding}px`;
-      const cards = entries.map((entry) => {
+      const visibleCount = Math.min(entries.length, MAX_COVER_CARDS);
+      const cardRadius = Math.floor(visibleCount / 2);
+      const direction = settings.coverDir === "left" ? -1 : 1;
+      const cards = Array.from({ length: visibleCount }, (_, cardIndex) => {
+        const entryIndex = normalizeIndex(index + cardIndex - cardRadius, entries.length);
         const card = createElement("div", "psm-cover-card");
-        card.appendChild(createLogo(entry, settings));
+        card.dataset.entryIndex = String(entryIndex);
+        card.appendChild(createLogo(entries[entryIndex], settings));
         container.appendChild(card);
         return card;
       });
@@ -994,20 +1054,45 @@
       let activeIndex = index;
       const step = () => {
         notifyIndexChange(activeIndex);
-        cards.forEach((card, cardIndex) => {
-          let offset = (cardIndex - activeIndex + cards.length) % cards.length;
-          if (offset > cards.length / 2) offset -= cards.length;
+        cards.forEach((card) => {
+          let offset = normalizeIndex(Number(card.dataset.entryIndex) - activeIndex, entries.length);
+          if (offset > entries.length / 2) offset -= entries.length;
+          if (visibleCount < entries.length && Math.abs(offset) > cardRadius) {
+            offset = direction * cardRadius;
+            const entryIndex = normalizeIndex(activeIndex + offset, entries.length);
+            const entry = entries[entryIndex];
+            const logo = card.querySelector("img.psm-logo");
+            if (logo && entry) {
+              logo.alt = entry.name;
+              logo.src = entry.url;
+              logo.hidden = false;
+              card.dataset.entryIndex = String(entryIndex);
+            }
+            card.classList.remove("is-active");
+            card.style.transition = "none";
+            card.style.transform = `translateX(${offset * 160}px) translateZ(${-cardRadius * 110}px) rotateY(${offset * -35}deg)`;
+            card.style.opacity = "0";
+            card.style.zIndex = String(100 - cardRadius);
+            void card.offsetWidth;
+            let recycleFrame = 0;
+            recycleFrame = requestAnimationFrame(() => {
+              animationFrames.delete(recycleFrame);
+              if (!isValid()) return;
+              card.style.transition = "";
+              card.style.opacity = String(number(settings.coverOpacity, 0.35, 0.05, 1));
+            });
+            animationFrames.add(recycleFrame);
+            return;
+          }
           const distance = Math.abs(offset);
+          card.classList.toggle("is-active", distance === 0);
           card.style.transform = `translateX(${offset * 160}px) translateZ(${-distance * 110}px) rotateY(${
             offset * -35
           }deg)`;
           card.style.opacity = String(distance === 0 ? 1 : number(settings.coverOpacity, 0.35, 0.05, 1));
           card.style.zIndex = String(100 - distance);
         });
-        activeIndex =
-          settings.coverDir === "left"
-            ? normalizeIndex(activeIndex - 1, cards.length)
-            : normalizeIndex(activeIndex + 1, cards.length);
+        activeIndex = normalizeIndex(activeIndex + direction, entries.length);
       };
       step();
       if (!paused && cards.length > 1) repeat(step, number(settings.coverSpeed, 1600, 100, 60000));

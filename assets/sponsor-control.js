@@ -5,12 +5,13 @@
   const Modes = window.PepsSponsorModes;
   if (!P || !Modes) throw new Error("Sponsor control dependencies are missing");
 
-  const VALID_VIEWS = ["live", "library", "modes", "settings"];
+  const VALID_VIEWS = ["library", "live", "modes", "settings"];
   const RECOMMENDED_MODE_IDS = new Set([
-    "lower_third", "rotator", "broadcast_ticker", "corner_badge",
-    "side_tower", "sponsor_break", "goal_popup"
+    "lower_third", "corner_badge", "cover3d", "grid_board", "sponsor_break"
   ]);
-  const ADDITIONAL_MODE_IDS = new Set(["cover3d", "spotlight", "float"]);
+  const ADDITIONAL_MODE_IDS = new Set([
+    "rotator", "side_tower", "broadcast_ticker", "goal_popup", "spotlight", "float"
+  ]);
   const OBS_LIBRARY_URL = "https://cdn.jsdelivr.net/npm/obs-websocket-js@5.0.4/dist/obs-ws.min.js";
   const MAX_IMPORT_BYTES = P.MAX_PROJECT_BYTES;
   const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
@@ -34,6 +35,7 @@
   let effectUiTimer = null;
   let progressTimer = null;
   let previewContextKey = "";
+  let previewPausedByUser = false;
   let unsubscribe = null;
   let previewResizeObserver = null;
 
@@ -48,6 +50,10 @@
     sponsorCount: $("sponsorCount"),
     navSponsorCount: $("navSponsorCount"),
     libraryCount: $("libraryCount"),
+    quickLogoCount: $("quickLogoCount"),
+    quickModeLabel: $("quickModeLabel"),
+    quickPlaylistName: $("quickPlaylistName"),
+    uploadDestination: $("uploadDestination"),
     playlistStatus: $("playlistStatus"),
     displayStatus: $("displayStatus"),
     projectName: $("projectName"),
@@ -103,6 +109,7 @@
     previewModeLabel: $("previewModeLabel"),
     previewStatus: $("previewStatus"),
     openPreviewDisplay: $("openPreviewDisplay"),
+    pausePreviewBtn: $("pausePreviewBtn"),
     cmdVisibility: $("cmdVisibility"),
     visibilityHint: $("visibilityHint"),
     visibilityLabel: $("visibilityLabel"),
@@ -296,7 +303,16 @@
     els.sponsorCount.textContent = String(state.images.length);
     els.navSponsorCount.textContent = String(state.images.length);
     els.libraryCount.textContent = String(state.images.length);
+    els.quickLogoCount.textContent = String(state.images.length);
     els.playlistStatus.textContent = playlist?.name || "-";
+    els.quickModeLabel.textContent = Modes.labels[playlist?.mode] || "เลือกรูปแบบ";
+    els.quickPlaylistName.textContent = playlist?.name || "ยังไม่มีชุดสปอนเซอร์";
+    if (els.uploadDestination) {
+      const group = P.getGroup(state, playlist?.groupId);
+      els.uploadDestination.textContent = playlist
+        ? `เพิ่มอัตโนมัติใน “${playlist.name}” และกลุ่ม “${group?.name || "เริ่มต้น"}”`
+        : "สร้างชุดสปอนเซอร์ก่อนเพิ่มโลโก้";
+    }
     const alternateData = state.migration.alternateRedesignDetected === true;
     const missingImages = Math.max(0, Number(state.migration.missingImages) || 0);
     els.migrationNotice.hidden = !alternateData && !missingImages;
@@ -343,7 +359,8 @@
     for (const button of document.querySelectorAll("[data-library-section]")) {
       const active = button.dataset.librarySection === section;
       button.classList.toggle("is-active", active);
-      button.setAttribute("aria-pressed", String(active));
+      if (active) button.setAttribute("aria-current", section === "groups" ? "location" : "step");
+      else button.removeAttribute("aria-current");
       if (active && options.focus) button.focus();
     }
   }
@@ -351,12 +368,24 @@
   function activateView(view, options = {}) {
     if (["sponsors", "collections"].includes(view)) view = "library";
     if (!VALID_VIEWS.includes(view)) view = "live";
+    if (view === "modes") {
+      const playlist = activePlaylist();
+      if (Modes.has(playlist?.mode)) state.mode = playlist.mode;
+      renderModes();
+    }
     document.body.dataset.activeView = view;
     for (const button of document.querySelectorAll("[data-view]")) {
       const active = button.dataset.view === view;
       button.classList.toggle("is-active", active);
-      button.setAttribute("aria-selected", String(active));
-      if (active) button.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (button.getAttribute("role") === "tab") {
+        button.setAttribute("aria-selected", String(active));
+      } else if (button.classList.contains("setup-step")) {
+        if (active) button.setAttribute("aria-current", "step");
+        else button.removeAttribute("aria-current");
+      }
+      if (active && !button.closest("[hidden]")) {
+        button.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
     for (const panel of document.querySelectorAll("[data-view-panel]")) {
       const active = view === "library"
@@ -368,8 +397,8 @@
     $("librarySwitcher").hidden = view !== "library";
     if (view === "library") activateLibrarySection(document.body.dataset.librarySection || "logos");
     if (options.writeHash !== false) history.replaceState(null, "", `#${view}`);
-    if (options.focus) document.querySelector(`[data-view="${view}"]`)?.focus();
-    updatePreviewContext(true);
+    if (options.focus) $("tab-" + view)?.focus();
+    updatePreviewContext();
   }
 
   function previewUrl() {
@@ -386,7 +415,15 @@
     return url;
   }
 
-  function updatePreviewContext(force = false) {
+  function suspendPreviewOutput(suspended) {
+    if (els.previewFrame.getAttribute("src") === "about:blank") return;
+    els.previewFrame.contentWindow?.postMessage({
+      type: "peps-sponsor-preview-suspend",
+      suspended
+    }, location.origin);
+  }
+
+  function updatePreviewContext() {
     const url = previewUrl();
     const key = `${url.searchParams.get("mode")}|${url.searchParams.get("group") || ""}`;
     const mode = url.searchParams.get("mode");
@@ -396,8 +433,29 @@
     const displayUrl = new URL(url);
     displayUrl.searchParams.delete("preview");
     els.openPreviewDisplay.href = displayUrl.href;
-    if (!force && previewContextKey === key) return;
+    if (previewPausedByUser || document.hidden) {
+      previewContextKey = key;
+      suspendPreviewOutput(true);
+      const paused = previewPausedByUser || document.hidden;
+      els.pausePreviewBtn.textContent = "▶";
+      els.pausePreviewBtn.setAttribute("aria-pressed", String(paused));
+      els.pausePreviewBtn.setAttribute("aria-label", "เล่นภาพตัวอย่างต่อ");
+      els.pausePreviewBtn.title = "เล่นภาพตัวอย่างต่อ";
+      els.previewStatus.textContent = document.hidden
+        ? "พัก Preview ขณะซ่อนหน้าต่าง"
+        : "พัก Preview เพื่อลดการใช้เครื่อง";
+      return;
+    }
+    if (previewContextKey === key && els.previewFrame.src === url.href) {
+      suspendPreviewOutput(false);
+      els.previewStatus.textContent = "พร้อมแสดง";
+      return;
+    }
     previewContextKey = key;
+    els.pausePreviewBtn.textContent = "Ⅱ";
+    els.pausePreviewBtn.setAttribute("aria-pressed", "false");
+    els.pausePreviewBtn.setAttribute("aria-label", "หยุดภาพตัวอย่างเพื่อลดการใช้ทรัพยากร");
+    els.pausePreviewBtn.title = "หยุดภาพตัวอย่าง";
     els.previewStatus.textContent = "กำลังโหลด";
     els.previewFrame.src = url.href;
   }
@@ -412,6 +470,10 @@
   }
 
   function reloadPreview() {
+    if (previewPausedByUser || document.hidden) {
+      updatePreviewContext();
+      return;
+    }
     previewContextKey = "";
     const url = previewUrl();
     url.searchParams.set("_", String(Date.now()));
@@ -510,7 +572,7 @@
       await renderSponsorList();
       renderGroupMembers();
       renderPlaylistItems();
-      updatePreviewContext(true);
+      updatePreviewContext();
       showToast("แทนที่ไฟล์รูปแล้ว", sponsor.name);
     } catch (error) {
       state = await P.loadStateAuthoritative();
@@ -851,7 +913,7 @@
   function renderGroupSelectors() {
     const options = groupOptions();
     fillSelect(els.groupSelect, options, state.activeGroupId);
-    fillSelect(els.uploadGroup, options, els.uploadGroup.value || state.activeGroupId);
+    fillSelect(els.uploadGroup, options, state.activeGroupId);
     fillSelect(els.playlistGroup, options, activePlaylist()?.groupId || state.activeGroupId);
     fillSelect(els.outputGroup, options, state.modeGroups[state.mode] || state.activeGroupId);
   }
@@ -873,9 +935,11 @@
 
   function renderPlaylistSelectors() {
     const options = playlistOptions();
+    const playlist = activePlaylist();
     fillSelect(els.livePlaylist, options, state.activePlaylist);
     fillSelect(els.activePlaylist, options, state.activePlaylist);
-    fillSelect(els.uploadPlaylist, options, els.uploadPlaylist.value || state.activePlaylist);
+    fillSelect(els.uploadPlaylist, options, state.activePlaylist);
+    fillSelect(els.uploadGroup, groupOptions(), playlist?.groupId || state.activeGroupId);
   }
 
   function renderPlaylistEditor() {
@@ -909,6 +973,7 @@
   function selectPlaylist(id) {
     if (!state.playlists.some((playlist) => playlist.id === id)) return;
     state.activePlaylist = id;
+    state.mode = activePlaylist()?.mode || state.mode;
     state.currentIndex = 0;
     playback = null;
     persist("เปลี่ยน Playlist แล้ว", { silent: true });
@@ -916,7 +981,7 @@
     refreshStatus();
     command("playlist", { playlistId: id });
     refreshFallbackNowPlaying();
-    updatePreviewContext(true);
+    updatePreviewContext();
   }
 
   function addPlaylist() {
@@ -952,7 +1017,7 @@
     renderPlaylistEditor();
     renderModes();
     refreshStatus();
-    updatePreviewContext(true);
+    updatePreviewContext();
   }
 
   async function deletePlaylist() {
@@ -1160,7 +1225,7 @@
         if (definition.id === state.mode) state.activeGroupId = select.value;
         persist("บันทึก Group ของโหมดแล้ว");
         renderUrlList();
-        updatePreviewContext(true);
+        updatePreviewContext();
       });
       row.append(copy, select);
       els.modeGroupMap.appendChild(row);
@@ -1232,10 +1297,14 @@
   function selectMode(mode) {
     if (!Modes.has(mode)) return;
     state.mode = mode;
+    const playlist = activePlaylist();
+    if (playlist) playlist.mode = mode;
     state.activeGroupId = state.modeGroups[mode] || state.activeGroupId;
-    persist("เปลี่ยนโหมดแล้ว");
+    persist("อัปเดตรูปแบบในชุดแล้ว");
     renderModes();
-    updatePreviewContext(true);
+    renderPlaylistEditor();
+    refreshStatus();
+    updatePreviewContext();
   }
 
   function renderModes() {
@@ -2076,6 +2145,7 @@
   function bindEvents() {
     for (const button of document.querySelectorAll("[data-view]")) {
       button.addEventListener("click", () => activateView(button.dataset.view));
+      if (button.getAttribute("role") !== "tab") continue;
       button.addEventListener("keydown", (event) => {
         if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         event.preventDefault();
@@ -2085,6 +2155,7 @@
       });
     }
     $("brandHome").addEventListener("click", () => activateView("live"));
+    $("returnToPrepareBtn").addEventListener("click", () => activateView("library"));
     for (const button of document.querySelectorAll("[data-library-section]")) {
       button.addEventListener("click", () => activateLibrarySection(button.dataset.librarySection));
     }
@@ -2158,7 +2229,7 @@
       renderModeStudio();
       renderModeGroupMap();
       renderUrlList();
-      updatePreviewContext(true);
+      updatePreviewContext();
     });
     $("syncModeBtn").addEventListener("click", () => command("sync", { mode: state.mode }));
     $("copyModeUrlBtn").addEventListener("click", () => copyText(els.currentModeUrl.value, "คัดลอก URL ของรูปแบบแล้ว"));
@@ -2199,7 +2270,23 @@
     $("cmdCancelEffect").addEventListener("click", () => command("cancel_effect"));
     $("cmdReload").addEventListener("click", () => command("reload"));
     $("reloadPreviewBtn").addEventListener("click", reloadPreview);
-    els.previewFrame.addEventListener("load", () => els.previewStatus.textContent = "พร้อมแสดง");
+    els.pausePreviewBtn.addEventListener("click", () => {
+      previewPausedByUser = !previewPausedByUser;
+      updatePreviewContext();
+    });
+    document.addEventListener("visibilitychange", () => updatePreviewContext());
+    els.previewFrame.addEventListener("load", () => {
+      if (previewPausedByUser || document.hidden) {
+        suspendPreviewOutput(true);
+        els.previewStatus.textContent = document.hidden
+          ? "พัก Preview ขณะซ่อนหน้าต่าง"
+          : "พัก Preview เพื่อลดการใช้เครื่อง";
+        return;
+      }
+      if (els.previewFrame.getAttribute("src") !== "about:blank") {
+        els.previewStatus.textContent = "พร้อมแสดง";
+      }
+    });
     $("copyAutoUrlBtn").addEventListener("click", () => copyText(dynamicDisplayUrl(), "คัดลอก Live Display URL แล้ว"));
 
     $("obsConnectForm").addEventListener("submit", (event) => {
@@ -2301,7 +2388,7 @@
       bindSettingsFromState();
       bindEvents();
       await renderAll();
-      activateView(location.hash.slice(1) || "live", { writeHash: false });
+      activateView(location.hash.slice(1) || "library", { writeHash: false });
       updatePreviewScale();
       setSaveStatus("พร้อมใช้งาน", "success");
     } catch (error) {
